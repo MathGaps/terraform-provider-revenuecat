@@ -91,13 +91,21 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 			return
 		}
 		s.routeCollection(w, r, collectionSpec{
-			kind:           "webhook_integration",
-			projectID:      projectID,
-			basePath:       "/v2/projects/" + projectID + "/integrations/webhooks",
-			render:         renderWebhookIntegration,
-			create:         webhookIntegrationFields,
-			update:         webhookIntegrationFields,
-			validateCreate: validateWebhookIntegrationCreate,
+			kind:      "webhook_integration",
+			projectID: projectID,
+			basePath:  "/v2/projects/" + projectID + "/integrations/webhooks",
+			render:    renderWebhookIntegration,
+			create:    webhookIntegrationFields,
+			update:    webhookIntegrationFields,
+			validateCreate: func(body map[string]any) *validationError {
+				if verr := validateWebhookIntegrationCreate(body); verr != nil {
+					return verr
+				}
+				return s.validateAppInProject(projectID, body)
+			},
+			validateUpdate: func(body map[string]any) *validationError {
+				return s.validateAppInProject(projectID, body)
+			},
 		}, rest[1:])
 
 	default:

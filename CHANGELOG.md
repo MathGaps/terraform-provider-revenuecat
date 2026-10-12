@@ -20,6 +20,9 @@ BUG FIXES:
   simulated subscription renews on.
 * **Renaming a product reaches RevenueCat.** `display_name` was written to state alone, so every
   refresh read the old name back as drift; it is now sent to the product update endpoint.
+* **Built with Go 1.26.9, `golang.org/x/net` 0.60.0 and `google.golang.org/grpc` 1.84.0.** Upstream's
+  0.1.18 was built with Go 1.25.8, and `govulncheck` reaches 32 published vulnerabilities from the
+  provider's own code on it, in the standard library's HTTP and TLS stacks and in gRPC.
 
 NOTES:
 

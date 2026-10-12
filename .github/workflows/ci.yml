@@ -14,9 +14,11 @@ jobs:
     name: Build and unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -38,6 +40,29 @@ jobs:
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
+  # Reachability-based: govulncheck reports a vulnerability only when a call
+  # path from this module reaches the affected symbol, so a CVE deep in a
+  # dependency the provider never calls does not fail the build. Without it,
+  # 0.1.19 nearly shipped on go 1.25.8 with 32 reachable vulnerabilities.
+  vulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pinned rather than @latest: a govulncheck release that raises its own
+      # go directive past go.mod's fails to build under GOTOOLCHAIN=local.
+      # Raise this together with go.mod.
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+
   terraform-e2e:
     name: End-to-end against the mock API
     runs-on: ubuntu-latest
@@ -48,14 +73,16 @@ jobs:
         # works on one of them is caught here rather than by a practitioner.
         terraform: ["1.9.*", "1.14.*"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ matrix.terraform }}
           terraform_wrapper: false
@@ -69,7 +96,9 @@ jobs:
     name: End-to-end in containers
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Apply the complete example against the mock in containers
         run: |

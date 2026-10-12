@@ -1,5 +1,9 @@
 # Terraform Provider for RevenueCat
 
+> **This is MathGaps's fork** of [nmehlei/terraform-provider-revenuecat](https://github.com/nmehlei/terraform-provider-revenuecat),
+> released to the OpenTofu Registry as `mathgaps/revenuecat`. The provider is upstream's work;
+> [FORK.md](FORK.md) lists what differs, and [CHANGELOG.md](CHANGELOG.md) what each release carries.
+
 A Terraform provider that manages a [RevenueCat](https://www.revenuecat.com/) project's catalog —
 apps, products, entitlements, offerings and packages — through the RevenueCat REST API v2.
 
@@ -28,7 +32,7 @@ under the same review and version control as the rest of your infrastructure.
 The provider is not published to the Terraform Registry. Build and install it locally:
 
 ```shell
-git clone https://github.com/nmehlei/terraform-provider-revenuecat.git
+git clone https://github.com/MathGaps/terraform-provider-revenuecat.git
 cd terraform-provider-revenuecat
 make install
 ```
@@ -38,7 +42,7 @@ Then point Terraform at your local build with a `dev_overrides` block in `~/.ter
 ```hcl
 provider_installation {
   dev_overrides {
-    "nmehlei/revenuecat" = "/path/to/your/gopath/bin"
+    "registry.opentofu.org/mathgaps/revenuecat" = "/path/to/your/gopath/bin"
   }
   direct {}
 }
@@ -52,7 +56,7 @@ With `dev_overrides` in place, skip `terraform init` and run `terraform plan` di
 terraform {
   required_providers {
     revenuecat = {
-      source = "nmehlei/revenuecat"
+      source = "registry.opentofu.org/mathgaps/revenuecat"
     }
   }
 }

@@ -24,7 +24,7 @@ ENV WORK_DIR=/work
 
 # The mirror layout terraform expects for a filesystem_mirror source.
 COPY --from=build /out/terraform-provider-revenuecat \
-     /plugins/registry.terraform.io/nmehlei/revenuecat/${VERSION}/linux_amd64/terraform-provider-revenuecat_v${VERSION}
+     /plugins/registry.opentofu.org/mathgaps/revenuecat/${VERSION}/linux_amd64/terraform-provider-revenuecat_v${VERSION}
 
 WORKDIR /work
 COPY examples /work/examples

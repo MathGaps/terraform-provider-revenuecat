@@ -71,7 +71,7 @@ cat > "$WORK_DIR/run/versions.tf" <<'EOF'
 terraform {
   required_providers {
     revenuecat = {
-      source = "registry.terraform.io/nmehlei/revenuecat"
+      source = "registry.opentofu.org/mathgaps/revenuecat"
     }
   }
 }
@@ -82,10 +82,10 @@ cat > "$TF_CLI_CONFIG_FILE" <<EOF
 provider_installation {
   filesystem_mirror {
     path    = "$PLUGIN_DIR"
-    include = ["registry.terraform.io/nmehlei/revenuecat"]
+    include = ["registry.opentofu.org/mathgaps/revenuecat"]
   }
   direct {
-    exclude = ["registry.terraform.io/nmehlei/revenuecat"]
+    exclude = ["registry.opentofu.org/mathgaps/revenuecat"]
   }
 }
 EOF

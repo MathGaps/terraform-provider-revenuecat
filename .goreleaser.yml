@@ -1,5 +1,10 @@
 version: 2
 
+# The registry requires the release artifacts to be named
+# terraform-provider-revenuecat_<version>_<os>_<arch>.zip. GoReleaser would
+# otherwise infer the project name from the checkout directory, so pin it.
+project_name: terraform-provider-revenuecat
+
 before:
   hooks:
     - go mod tidy
@@ -57,6 +62,13 @@ release:
   extra_files:
     - glob: "terraform-registry-manifest.json"
       name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
+  # A draft until every asset is up: the release workflow publishes it in its
+  # last step. The OpenTofu registry scans for new releases every few minutes,
+  # and a release it sees before SHA256SUMS has uploaded is recorded as an error
+  # and not retried for half an hour (FORK.md).
+  draft: true
 
-changelog:
-  disable: true
+# No changelog block: `--release-notes` in the release workflow supplies the
+# body from CHANGELOG.md, and GoReleaser loads that file during the changelog
+# step. `disable: true` here skips the step -- and with it the file, silently
+# publishing an empty release body.

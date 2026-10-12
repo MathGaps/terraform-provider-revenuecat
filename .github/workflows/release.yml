@@ -1,68 +1,97 @@
+# Terraform Provider release workflow.
 name: Release
 
-# One workflow, not two: a tag pushed by a workflow using the default GITHUB_TOKEN does not
-# trigger other workflows (GitHub's anti-recursion protection), so a separate tag-then-release
-# pair never fires the release half. Tagging and releasing happen in the same job instead, so
-# there is no cross-workflow trigger to rely on. Every merge to main is a release.
+# This GitHub action creates a release when a tag that matches the pattern
+# "v*" (e.g. v0.1.0) is created.
 on:
   push:
-    branches: [main]
-  # For re-cutting a release without an unrelated commit — e.g. after rotating the signing key.
-  workflow_dispatch:
+    tags:
+      - 'v*'
 
+# Releases need permissions to read and write the repository contents.
+# GitHub considers creating releases and uploading assets as writing contents.
 permissions:
   contents: write
 
 jobs:
-  tag-and-release:
+  goreleaser:
     runs-on: ubuntu-latest
+    # MathGaps's fork (FORK.md): the signing key is this environment's secret,
+    # and the environment admits only `v*` tags, so a workflow pushed on a
+    # branch cannot read it.
+    environment: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Allow goreleaser to access older tag information.
           fetch-depth: 0
-
-      - uses: gittools/actions/gitversion/setup@v3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          versionSpec: "5.x"
-
-      - uses: gittools/actions/gitversion/execute@v3
-        id: gitversion
-        with:
-          useConfigFile: true
-
-      - name: Tag
-        env:
-          VERSION: v${{ steps.gitversion.outputs.semVer }}
-        run: |
-          set -euo pipefail
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Tag $VERSION already exists, nothing to release."
-            echo "skip=true" >> "$GITHUB_ENV"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "$VERSION" -m "Release $VERSION"
-          git push origin "$VERSION"
-
-      - uses: actions/setup-go@v5
-        if: env.skip != 'true'
-        with:
-          go-version-file: go.mod
+          go-version-file: 'go.mod'
           cache: true
-
       - name: Import GPG key
-        if: env.skip != 'true'
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         id: import_gpg
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
+      # The Terraform Registry shows the GitHub release body as the release
+      # notes, and a list of commit subjects is not release notes. CHANGELOG.md
+      # already holds a written section per version, so hand GoReleaser that
+      # instead. Note that .goreleaser.yml must NOT disable the changelog: that
+      # is the step which loads this file, and disabling it publishes an empty
+      # body while every step still reports success.
+      #
+      # Fails when the tag has no matching section rather than releasing with
+      # an empty body: a version is ingested once and cannot be re-released,
+      # so silently shipping no notes is worse than not shipping.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            !found && $0 ~ "^## " v "([ (]|$)" { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          # Whitespace is not notes: GoReleaser only warns about it.
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"; then
+            echo "CHANGELOG.md has no '## $version' section for tag $GITHUB_REF_NAME." >&2
+            echo "Add one before tagging: it becomes the release notes on the Registry." >&2
+            exit 1
+          fi
+          echo "Release notes ($(wc -l < "$RUNNER_TEMP/release-notes.md") lines):"
+          cat "$RUNNER_TEMP/release-notes.md"
 
-      - uses: goreleaser/goreleaser-action@v6
-        if: env.skip != 'true'
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          args: release --clean
+          # Pinned to the v2 line: a future major could drop options this
+          # configuration still uses, and a release is not the place to find out.
+          version: '~> v2'
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
+          # GitHub sets the GITHUB_TOKEN secret automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+
+      # GoReleaser leaves the release a draft (.goreleaser.yml). Publish it only
+      # once the checksum file, its signature and every archive the checksum
+      # file names are attached, so the registry never sees half a release.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          sums="${GITHUB_REPOSITORY#*/}_${version}_SHA256SUMS"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort > "$RUNNER_TEMP/assets.txt"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "$sums" --dir "$RUNNER_TEMP"
+          { awk '{ print $2 }' "$RUNNER_TEMP/$sums"; echo "$sums"; echo "$sums.sig"; } | sort > "$RUNNER_TEMP/expected.txt"
+          missing="$(comm -23 "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/assets.txt")"
+          if [ -n "$missing" ]; then
+            echo "The draft release is missing assets; it stays a draft:" >&2
+            echo "$missing" >&2
+            exit 1
+          fi
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          echo "Published $GITHUB_REF_NAME with $(wc -l < "$RUNNER_TEMP/assets.txt") assets."

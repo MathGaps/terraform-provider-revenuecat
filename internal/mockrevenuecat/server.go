@@ -120,6 +120,21 @@ func (s *Server) ProductTitle(productID string) string {
 	return title
 }
 
+// AppStoreSecrets returns what the mock holds for an App Store app's three
+// secrets, which no HTTP response reveals: the shared secret, and each key as
+// "<key>|<id>|<issuer>". A test asserting a rotation needs these, since the
+// configured flags stay true across one.
+func (s *Server) AppStoreSecrets(appID string) (sharedSecret, subscriptionKey, apiKey string) {
+	obj, ok := s.store.get("app", "", appID)
+	if !ok {
+		return "", "", ""
+	}
+	sharedSecret, _ = obj.Fields[appStoreSharedSecretField].(string)
+	subscriptionKey, _ = obj.Fields[appStoreSubscriptionKeyField].(string)
+	apiKey, _ = obj.Fields[appStoreConnectAPIKeyField].(string)
+	return sharedSecret, subscriptionKey, apiKey
+}
+
 // RequestCount reports how many requests the server has served, so a test can
 // assert that a retry actually happened.
 func (s *Server) RequestCount() int {

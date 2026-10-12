@@ -33,6 +33,7 @@ var AppTypes = []string{
 // before its config struct exists would just move the failure from plan time
 // to apply time.
 var ImplementedAppTypes = []string{
+	AppTypeAppStore,
 	AppTypePlayStore,
 }
 
@@ -98,17 +99,79 @@ func (c *PlayStoreConfig) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// AppStoreConfig is the App Store-specific configuration nested under an app's
+// "app_store" key.
+//
+// Like PlayStoreConfig, it is asymmetric on purpose. The three secrets — the
+// shared secret, the In-App Purchase key and the App Store Connect API key —
+// are only ever sent, and so are the ids and issuers that name the two keys:
+// the API returns none of them. What it returns instead is a configured flag
+// per key, the only way a missing key can surface as drift rather than as
+// purchases RevenueCat cannot verify.
+type AppStoreConfig struct {
+	BundleID string `json:"bundle_id,omitempty"`
+
+	// SharedSecret is the app-specific shared secret. Write-only.
+	SharedSecret string `json:"shared_secret,omitempty"`
+
+	// The In-App Purchase key (a .p8), with the id and issuer that name it.
+	// Write-only.
+	SubscriptionPrivateKey string `json:"subscription_private_key,omitempty"`
+	SubscriptionKeyID      string `json:"subscription_key_id,omitempty"`
+	SubscriptionKeyIssuer  string `json:"subscription_key_issuer,omitempty"`
+
+	// The App Store Connect API key (a .p8), with the id and issuer that name
+	// it. Write-only.
+	AppStoreConnectAPIKey       string `json:"app_store_connect_api_key,omitempty"`
+	AppStoreConnectAPIKeyID     string `json:"app_store_connect_api_key_id,omitempty"`
+	AppStoreConnectAPIKeyIssuer string `json:"app_store_connect_api_key_issuer,omitempty"`
+
+	// AppStoreConnectVendorNumber is sent and returned.
+	AppStoreConnectVendorNumber *string `json:"app_store_connect_vendor_number,omitempty"`
+
+	// The configured flags are read-only: the API computes them.
+	SubscriptionKeyConfigured       bool `json:"-"`
+	AppStoreConnectAPIKeyConfigured bool `json:"-"`
+}
+
+// appStoreConfigWire decodes the fields the API returns. It exists so
+// UnmarshalJSON can decode without recursing into itself.
+type appStoreConfigWire struct {
+	BundleID                        string  `json:"bundle_id"`
+	SubscriptionKeyConfigured       bool    `json:"subscription_key_configured"`
+	AppStoreConnectAPIKeyConfigured bool    `json:"app_store_connect_api_key_configured"`
+	AppStoreConnectVendorNumber     *string `json:"app_store_connect_vendor_number"`
+}
+
+// UnmarshalJSON keeps only what the API is documented to return, so a secret
+// it might echo can never enter state through a response (see PlayStoreConfig).
+func (c *AppStoreConfig) UnmarshalJSON(data []byte) error {
+	var wire appStoreConfigWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*c = AppStoreConfig{
+		BundleID:                        wire.BundleID,
+		AppStoreConnectVendorNumber:     wire.AppStoreConnectVendorNumber,
+		SubscriptionKeyConfigured:       wire.SubscriptionKeyConfigured,
+		AppStoreConnectAPIKeyConfigured: wire.AppStoreConnectAPIKeyConfigured,
+	}
+	return nil
+}
+
 // App is a store app belonging to a project. The API nests store-specific
-// configuration under a key named after the store type (e.g. "play_store");
-// this provider currently only implements that nesting for Play Store apps
-// (see AppTypes vs. ImplementedAppTypes) — every other type's config object
-// (app_store, amazon, stripe, rc_billing, roku, paddle) still needs adding.
+// configuration under a key named after the store type ("app_store",
+// "play_store"); this provider implements that nesting for those two (see
+// AppTypes vs. ImplementedAppTypes) — every other type's config object
+// (amazon, stripe, rc_billing, roku, paddle) still needs adding. A project's
+// Test Store app ("test_store") is RevenueCat's own and has none.
 type App struct {
 	ID        string           `json:"id"`
 	Name      string           `json:"name"`
 	Type      string           `json:"type"`
 	ProjectID string           `json:"project_id"`
 	CreatedAt int64            `json:"created_at"`
+	AppStore  *AppStoreConfig  `json:"app_store,omitempty"`
 	PlayStore *PlayStoreConfig `json:"play_store,omitempty"`
 }
 
@@ -118,18 +181,20 @@ type App struct {
 type CreateAppRequest struct {
 	Name      string           `json:"name"`
 	Type      string           `json:"type"`
+	AppStore  *AppStoreConfig  `json:"app_store,omitempty"`
 	PlayStore *PlayStoreConfig `json:"play_store,omitempty"`
 }
 
 // UpdateAppRequest is the payload for updating an app. Type and project are
-// part of the app's identity and cannot change; a name change and a Play
-// service account credential rotation can both happen in place.
+// part of the app's identity and cannot change; a name change, a vendor number
+// and a credential rotation can all happen in place.
 //
-// PlayStore is omitted entirely unless a credential is being rotated: sending
-// an empty object on a plain rename risks the API reading it as "clear the
-// credential", which would break purchase verification silently.
+// The store objects are omitted entirely unless something in them is being
+// sent: an empty object on a plain rename risks the API reading it as "clear
+// the credential", which would break purchase verification silently.
 type UpdateAppRequest struct {
 	Name      *string          `json:"name,omitempty"`
+	AppStore  *AppStoreConfig  `json:"app_store,omitempty"`
 	PlayStore *PlayStoreConfig `json:"play_store,omitempty"`
 }
 

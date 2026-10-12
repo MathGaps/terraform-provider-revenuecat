@@ -70,6 +70,10 @@ func (d *appDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, re
 				MarkdownDescription: "Play Store package identifier, when `type` is `play_store`.",
 				Computed:            true,
 			},
+			"bundle_id": schema.StringAttribute{
+				MarkdownDescription: "App Store bundle identifier, when `type` is `app_store`.",
+				Computed:            true,
+			},
 			"created_at": schema.Int64Attribute{
 				MarkdownDescription: "Creation time of the app, in milliseconds since the Unix epoch.",
 				Computed:            true,
@@ -132,6 +136,7 @@ type appDataSourceModel struct {
 	Name        types.String `tfsdk:"name"`
 	Type        types.String `tfsdk:"type"`
 	PackageName types.String `tfsdk:"package_name"`
+	BundleID    types.String `tfsdk:"bundle_id"`
 	CreatedAt   types.Int64  `tfsdk:"created_at"`
 }
 
@@ -139,9 +144,12 @@ func appToDataSourceModel(projectID string, app *revenuecat.App) appDataSourceMo
 	if app.ProjectID != "" {
 		projectID = app.ProjectID
 	}
-	packageName := types.StringNull()
+	packageName, bundleID := types.StringNull(), types.StringNull()
 	if app.PlayStore != nil {
 		packageName = types.StringValue(app.PlayStore.PackageName)
+	}
+	if app.AppStore != nil {
+		bundleID = types.StringValue(app.AppStore.BundleID)
 	}
 	return appDataSourceModel{
 		ID:          types.StringValue(app.ID),
@@ -149,6 +157,7 @@ func appToDataSourceModel(projectID string, app *revenuecat.App) appDataSourceMo
 		Name:        types.StringValue(app.Name),
 		Type:        types.StringValue(app.Type),
 		PackageName: packageName,
+		BundleID:    bundleID,
 		CreatedAt:   types.Int64Value(app.CreatedAt),
 	}
 }

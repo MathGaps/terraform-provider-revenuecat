@@ -22,6 +22,7 @@ var (
 	_ resource.ResourceWithConfigure        = (*appResource)(nil)
 	_ resource.ResourceWithImportState      = (*appResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*appResource)(nil)
+	_ resource.ResourceWithValidateConfig   = (*appResource)(nil)
 )
 
 // NewAppResource returns the revenuecat_app resource.
@@ -39,6 +40,7 @@ type appModel struct {
 	Name        types.String `tfsdk:"name"`
 	Type        types.String `tfsdk:"type"`
 	PackageName types.String `tfsdk:"package_name"`
+	BundleID    types.String `tfsdk:"bundle_id"`
 	CreatedAt   types.Int64  `tfsdk:"created_at"`
 
 	// CredentialsJSONWO is write-only: Terraform leaves it null in both plan
@@ -46,15 +48,88 @@ type appModel struct {
 	CredentialsJSONWO        types.String `tfsdk:"play_service_account_credentials_json_wo"`
 	CredentialsJSONWOVersion types.String `tfsdk:"play_service_account_credentials_json_wo_version"`
 	CredentialsConfigured    types.Bool   `tfsdk:"play_service_account_credentials_configured"`
+
+	// The App Store's three secrets follow the same pattern: each is
+	// write-only, and a version the practitioner owns is what resends it.
+	SharedSecretWO        types.String `tfsdk:"shared_secret_wo"`
+	SharedSecretWOVersion types.String `tfsdk:"shared_secret_wo_version"`
+
+	SubscriptionPrivateKeyWO        types.String `tfsdk:"subscription_private_key_wo"`
+	SubscriptionPrivateKeyWOVersion types.String `tfsdk:"subscription_private_key_wo_version"`
+	SubscriptionKeyID               types.String `tfsdk:"subscription_key_id"`
+	SubscriptionKeyIssuer           types.String `tfsdk:"subscription_key_issuer"`
+	SubscriptionKeyConfigured       types.Bool   `tfsdk:"subscription_key_configured"`
+
+	AppStoreConnectAPIKeyWO         types.String `tfsdk:"app_store_connect_api_key_wo"`
+	AppStoreConnectAPIKeyWOVersion  types.String `tfsdk:"app_store_connect_api_key_wo_version"`
+	AppStoreConnectAPIKeyID         types.String `tfsdk:"app_store_connect_api_key_id"`
+	AppStoreConnectAPIKeyIssuer     types.String `tfsdk:"app_store_connect_api_key_issuer"`
+	AppStoreConnectAPIKeyConfigured types.Bool   `tfsdk:"app_store_connect_api_key_configured"`
+
+	AppStoreConnectVendorNumber types.String `tfsdk:"app_store_connect_vendor_number"`
 }
+
+// playStoreAttributes and appStoreAttributes are the attributes that belong
+// to one store only. ValidateConfig refuses either set on the other store's
+// app, because the API would silently ignore it and the practitioner would
+// believe a key was configured that never was.
+var (
+	playStoreAttributes = []string{
+		"package_name",
+		"play_service_account_credentials_json_wo",
+		"play_service_account_credentials_json_wo_version",
+	}
+	appStoreAttributes = []string{
+		"bundle_id",
+		"shared_secret_wo", "shared_secret_wo_version",
+		"subscription_private_key_wo", "subscription_private_key_wo_version",
+		"subscription_key_id", "subscription_key_issuer",
+		"app_store_connect_api_key_wo", "app_store_connect_api_key_wo_version",
+		"app_store_connect_api_key_id", "app_store_connect_api_key_issuer",
+		"app_store_connect_vendor_number",
+	}
+)
 
 func (r *appResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_app"
 }
 
+// writeOnlySecret is the schema of one write-only store secret.
+func writeOnlySecret(description string) schema.StringAttribute {
+	return schema.StringAttribute{
+		MarkdownDescription: description + " Write-only: Terraform sends it but never writes it to state " +
+			"or to a plan file, so pair it with an `ephemeral` source to keep it out of every artifact. " +
+			"Requires Terraform 1.11 or later, and its `_version` attribute alongside it.",
+		Optional:  true,
+		WriteOnly: true,
+		Sensitive: true,
+	}
+}
+
+// secretVersion is the schema of the marker that resends a write-only secret.
+func secretVersion(secret string) schema.StringAttribute {
+	return schema.StringAttribute{
+		MarkdownDescription: fmt.Sprintf("Arbitrary version marker for `%s`. Terraform cannot detect a "+
+			"change to a value it does not store, so changing this is what tells the provider to send the "+
+			"secret again — bump it whenever the secret is rotated.", secret),
+		Optional: true,
+	}
+}
+
+// sentOnly is the schema of a value RevenueCat takes but never returns, so it
+// is kept from the configuration.
+func sentOnly(description string) schema.StringAttribute {
+	return schema.StringAttribute{
+		MarkdownDescription: description + " RevenueCat does not return it, so it is read from the " +
+			"configuration, and is sent again whenever it or its key's version changes.",
+		Optional: true,
+	}
+}
+
 func (r *appResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages a store app within a RevenueCat project.",
+		MarkdownDescription: "Manages a store app within a RevenueCat project: an App Store or a Play Store " +
+			"app, with the credentials RevenueCat verifies its purchases with.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "RevenueCat identifier of the app.",
@@ -77,8 +152,8 @@ func (r *appResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 			"type": schema.StringAttribute{
 				MarkdownDescription: fmt.Sprintf(
 					"Store the app belongs to. One of `%s` — RevenueCat's API nests type-specific "+
-						"configuration under a key named after the type, and this provider only "+
-						"implements that nesting for `play_store` so far. Changing this forces a new app.",
+						"configuration under a key named after the type, and this provider implements that "+
+						"nesting for these. Changing this forces a new app.",
 					joinBackticked(revenuecat.ImplementedAppTypes),
 				),
 				Required: true,
@@ -90,9 +165,17 @@ func (r *appResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				},
 			},
 			"package_name": schema.StringAttribute{
-				MarkdownDescription: "Play Store package identifier (e.g. `com.example.app`). Required " +
-					"because `type` currently only accepts `play_store`. Changing this forces a new app.",
-				Required: true,
+				MarkdownDescription: "Play Store package identifier (e.g. `com.example.app`). Required when " +
+					"`type` is `play_store`, and refused otherwise. Changing this forces a new app.",
+				Optional: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"bundle_id": schema.StringAttribute{
+				MarkdownDescription: "App Store bundle identifier (e.g. `com.example.app`). Required when " +
+					"`type` is `app_store`, and refused otherwise. Changing this forces a new app.",
+				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -104,6 +187,7 @@ func (r *appResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 					int64UseStateForUnknown(),
 				},
 			},
+
 			"play_service_account_credentials_json_wo": schema.StringAttribute{
 				MarkdownDescription: "Contents of the Google Cloud service account key file RevenueCat uses to " +
 					"verify Play purchases server-side. Write-only: Terraform sends it but never writes it to " +
@@ -128,23 +212,115 @@ func (r *appResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 			"play_service_account_credentials_configured": schema.BoolAttribute{
 				MarkdownDescription: "Whether RevenueCat holds Play service account credentials for this app. " +
 					"Reported by the API, and the only observable signal that the credential is present — a " +
-					"`false` here is the difference between purchases being verified and being refunded.",
+					"`false` here is the difference between purchases being verified and being refunded. Null " +
+					"for an app of another store.",
 				Computed: true,
+			},
+
+			"shared_secret_wo": writeOnlySecret("The app-specific shared secret (32 characters) from App " +
+				"Store Connect, which RevenueCat validates older StoreKit receipts with."),
+			"shared_secret_wo_version": secretVersion("shared_secret_wo"),
+
+			"subscription_private_key_wo": writeOnlySecret("Contents of the In-App Purchase key (`.p8`) " +
+				"RevenueCat verifies App Store transactions and notifications with. Set together with " +
+				"`subscription_key_id` and `subscription_key_issuer`."),
+			"subscription_private_key_wo_version": secretVersion("subscription_private_key_wo"),
+			"subscription_key_id":                 sentOnly("Key ID of the In-App Purchase key."),
+			"subscription_key_issuer":             sentOnly("Issuer ID of the In-App Purchase key."),
+			"subscription_key_configured": schema.BoolAttribute{
+				MarkdownDescription: "Whether RevenueCat holds an In-App Purchase key for this app. Reported by " +
+					"the API, and the only observable signal the key is present. Null for an app of another store.",
+				Computed: true,
+			},
+
+			"app_store_connect_api_key_wo": writeOnlySecret("Contents of an App Store Connect API key " +
+				"(`.p8`), which RevenueCat imports products and prices with. Set together with " +
+				"`app_store_connect_api_key_id` and `app_store_connect_api_key_issuer`."),
+			"app_store_connect_api_key_wo_version": secretVersion("app_store_connect_api_key_wo"),
+			"app_store_connect_api_key_id":         sentOnly("Key ID of the App Store Connect API key."),
+			"app_store_connect_api_key_issuer":     sentOnly("Issuer ID of the App Store Connect API key."),
+			"app_store_connect_api_key_configured": schema.BoolAttribute{
+				MarkdownDescription: "Whether RevenueCat holds an App Store Connect API key for this app. " +
+					"Reported by the API. Null for an app of another store.",
+				Computed: true,
+			},
+
+			"app_store_connect_vendor_number": schema.StringAttribute{
+				MarkdownDescription: "The App Store Connect vendor number, which RevenueCat needs for financial " +
+					"reports. Changed in place; left out, the app keeps the one it has.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
 }
 
-// ConfigValidators rejects a credential with no version. Terraform cannot diff
-// a write-only value, so such a configuration would accept a rotated key and
-// silently never send it — the failure would surface as refunded purchases
-// rather than as an error.
+// ConfigValidators rejects a secret with no version, and a key with no id or
+// issuer. Terraform cannot diff a write-only value, so a secret without a
+// version would accept a rotation and silently never send it — the failure
+// would surface as purchases RevenueCat cannot verify rather than as an error.
 func (r *appResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
 	return []resource.ConfigValidator{
 		resourcevalidator.RequiredTogether(
 			path.MatchRoot("play_service_account_credentials_json_wo"),
 			path.MatchRoot("play_service_account_credentials_json_wo_version"),
 		),
+		resourcevalidator.RequiredTogether(
+			path.MatchRoot("shared_secret_wo"),
+			path.MatchRoot("shared_secret_wo_version"),
+		),
+		resourcevalidator.RequiredTogether(
+			path.MatchRoot("subscription_private_key_wo"),
+			path.MatchRoot("subscription_private_key_wo_version"),
+			path.MatchRoot("subscription_key_id"),
+			path.MatchRoot("subscription_key_issuer"),
+		),
+		resourcevalidator.RequiredTogether(
+			path.MatchRoot("app_store_connect_api_key_wo"),
+			path.MatchRoot("app_store_connect_api_key_wo_version"),
+			path.MatchRoot("app_store_connect_api_key_id"),
+			path.MatchRoot("app_store_connect_api_key_issuer"),
+		),
+	}
+}
+
+// ValidateConfig holds each store's attributes to its own type: the one that
+// names the app is required, and the other store's are refused.
+func (r *appResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var appType types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("type"), &appType)...)
+	if resp.Diagnostics.HasError() || appType.IsNull() || appType.IsUnknown() {
+		return
+	}
+
+	var required string
+	var refused []string
+	switch appType.ValueString() {
+	case revenuecat.AppTypeAppStore:
+		required, refused = "bundle_id", playStoreAttributes
+	case revenuecat.AppTypePlayStore:
+		required, refused = "package_name", appStoreAttributes
+	default:
+		return
+	}
+
+	var value types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(required), &value)...)
+	if value.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root(required), "Missing store identifier",
+			fmt.Sprintf("`%s` is required when `type` is `%s`.", required, appType.ValueString()))
+	}
+
+	for _, name := range refused {
+		var other types.String
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(name), &other)...)
+		if !other.IsNull() {
+			resp.Diagnostics.AddAttributeError(path.Root(name), "Attribute of another store",
+				fmt.Sprintf("`%s` does not apply when `type` is `%s`.", name, appType.ValueString()))
+		}
 	}
 }
 
@@ -155,27 +331,44 @@ func (r *appResource) Configure(_ context.Context, req resource.ConfigureRequest
 func (r *appResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan, config appModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	// Write-only attributes are null in the plan by design, so the credential
-	// has to be read from the configuration.
+	// Write-only attributes are null in the plan by design, so the secrets
+	// have to be read from the configuration.
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	app, err := r.client.CreateApp(ctx, plan.ProjectID.ValueString(), revenuecat.CreateAppRequest{
+	create := revenuecat.CreateAppRequest{
 		Name: plan.Name.ValueString(),
 		Type: plan.Type.ValueString(),
-		PlayStore: &revenuecat.PlayStoreConfig{
+	}
+	switch plan.Type.ValueString() {
+	case revenuecat.AppTypeAppStore:
+		create.AppStore = &revenuecat.AppStoreConfig{
+			BundleID:                    plan.BundleID.ValueString(),
+			SharedSecret:                config.SharedSecretWO.ValueString(),
+			SubscriptionPrivateKey:      config.SubscriptionPrivateKeyWO.ValueString(),
+			SubscriptionKeyID:           plan.SubscriptionKeyID.ValueString(),
+			SubscriptionKeyIssuer:       plan.SubscriptionKeyIssuer.ValueString(),
+			AppStoreConnectAPIKey:       config.AppStoreConnectAPIKeyWO.ValueString(),
+			AppStoreConnectAPIKeyID:     plan.AppStoreConnectAPIKeyID.ValueString(),
+			AppStoreConnectAPIKeyIssuer: plan.AppStoreConnectAPIKeyIssuer.ValueString(),
+			AppStoreConnectVendorNumber: optionalString(plan.AppStoreConnectVendorNumber),
+		}
+	case revenuecat.AppTypePlayStore:
+		create.PlayStore = &revenuecat.PlayStoreConfig{
 			PackageName:                   plan.PackageName.ValueString(),
 			ServiceAccountCredentialsJSON: config.CredentialsJSONWO.ValueString(),
-		},
-	})
+		}
+	}
+
+	app, err := r.client.CreateApp(ctx, plan.ProjectID.ValueString(), create)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to create the RevenueCat app", err.Error())
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, appToModel(plan.ProjectID.ValueString(), app, plan.CredentialsJSONWOVersion))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, appToModel(plan.ProjectID.ValueString(), app, plan))...)
 }
 
 func (r *appResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -195,7 +388,7 @@ func (r *appResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, appToModel(state.ProjectID.ValueString(), app, state.CredentialsJSONWOVersion))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, appToModel(state.ProjectID.ValueString(), app, state))...)
 }
 
 func (r *appResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -210,13 +403,49 @@ func (r *appResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	name := plan.Name.ValueString()
 	update := revenuecat.UpdateAppRequest{Name: &name}
 
-	// Resend the credential only when its version moved. Sending it on every
-	// update would push the key over the wire on an unrelated rename; never
-	// sending it would make rotation impossible, because Terraform cannot see
-	// that a write-only value changed.
-	if !plan.CredentialsJSONWOVersion.Equal(state.CredentialsJSONWOVersion) && !config.CredentialsJSONWO.IsNull() {
-		update.PlayStore = &revenuecat.PlayStoreConfig{
-			ServiceAccountCredentialsJSON: config.CredentialsJSONWO.ValueString(),
+	// A secret is resent only when its version moved (or, for a key, the id
+	// or issuer naming it changed). Sending one on every update would push it
+	// over the wire on an unrelated rename; never sending it would make
+	// rotation impossible, because Terraform cannot see that a write-only
+	// value changed.
+	switch state.Type.ValueString() {
+	case revenuecat.AppTypeAppStore:
+		appStore := revenuecat.AppStoreConfig{}
+		send := false
+		if !plan.AppStoreConnectVendorNumber.IsUnknown() && !plan.AppStoreConnectVendorNumber.IsNull() &&
+			!plan.AppStoreConnectVendorNumber.Equal(state.AppStoreConnectVendorNumber) {
+			appStore.AppStoreConnectVendorNumber = optionalString(plan.AppStoreConnectVendorNumber)
+			send = true
+		}
+		if !plan.SharedSecretWOVersion.Equal(state.SharedSecretWOVersion) && !config.SharedSecretWO.IsNull() {
+			appStore.SharedSecret = config.SharedSecretWO.ValueString()
+			send = true
+		}
+		if keyChanged(plan.SubscriptionPrivateKeyWOVersion, plan.SubscriptionKeyID, plan.SubscriptionKeyIssuer,
+			state.SubscriptionPrivateKeyWOVersion, state.SubscriptionKeyID, state.SubscriptionKeyIssuer) &&
+			!config.SubscriptionPrivateKeyWO.IsNull() {
+			appStore.SubscriptionPrivateKey = config.SubscriptionPrivateKeyWO.ValueString()
+			appStore.SubscriptionKeyID = plan.SubscriptionKeyID.ValueString()
+			appStore.SubscriptionKeyIssuer = plan.SubscriptionKeyIssuer.ValueString()
+			send = true
+		}
+		if keyChanged(plan.AppStoreConnectAPIKeyWOVersion, plan.AppStoreConnectAPIKeyID, plan.AppStoreConnectAPIKeyIssuer,
+			state.AppStoreConnectAPIKeyWOVersion, state.AppStoreConnectAPIKeyID, state.AppStoreConnectAPIKeyIssuer) &&
+			!config.AppStoreConnectAPIKeyWO.IsNull() {
+			appStore.AppStoreConnectAPIKey = config.AppStoreConnectAPIKeyWO.ValueString()
+			appStore.AppStoreConnectAPIKeyID = plan.AppStoreConnectAPIKeyID.ValueString()
+			appStore.AppStoreConnectAPIKeyIssuer = plan.AppStoreConnectAPIKeyIssuer.ValueString()
+			send = true
+		}
+		if send {
+			update.AppStore = &appStore
+		}
+
+	case revenuecat.AppTypePlayStore:
+		if !plan.CredentialsJSONWOVersion.Equal(state.CredentialsJSONWOVersion) && !config.CredentialsJSONWO.IsNull() {
+			update.PlayStore = &revenuecat.PlayStoreConfig{
+				ServiceAccountCredentialsJSON: config.CredentialsJSONWO.ValueString(),
+			}
 		}
 	}
 
@@ -226,7 +455,13 @@ func (r *appResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, appToModel(state.ProjectID.ValueString(), app, plan.CredentialsJSONWOVersion))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, appToModel(state.ProjectID.ValueString(), app, plan))...)
+}
+
+// keyChanged reports whether a versioned key has to be sent again: its
+// version moved, or the id or issuer naming it did.
+func keyChanged(version, id, issuer, priorVersion, priorID, priorIssuer types.String) bool {
+	return !version.Equal(priorVersion) || !id.Equal(priorID) || !issuer.Equal(priorIssuer)
 }
 
 func (r *appResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -253,33 +488,60 @@ func (r *appResource) ImportState(ctx context.Context, req resource.ImportStateR
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
 }
 
-// appToModel maps an API app onto the resource model. The project ID comes from
-// configuration because the API does not always echo it back, and so does the
-// credential version: it is a marker the practitioner owns, which RevenueCat
-// neither stores nor returns.
+// appToModel maps an API app onto the resource model. The project ID comes
+// from prior (the plan or state) because the API does not always echo it
+// back, and so does everything RevenueCat takes but never returns: the secret
+// versions, which are markers the practitioner owns, and the ids and issuers
+// naming the App Store keys.
 //
-// The write-only credential itself is always left null. Terraform requires
-// that, and it is the property the whole attribute exists for.
-func appToModel(projectID string, app *revenuecat.App, credentialsVersion types.String) appModel {
+// The write-only secrets themselves are always left null. Terraform requires
+// that, and it is the property those attributes exist for.
+func appToModel(projectID string, app *revenuecat.App, prior appModel) appModel {
 	if app.ProjectID != "" {
 		projectID = app.ProjectID
 	}
-	packageName := types.StringNull()
-	credentialsConfigured := types.BoolValue(false)
-	if app.PlayStore != nil {
-		packageName = types.StringValue(app.PlayStore.PackageName)
-		credentialsConfigured = types.BoolValue(app.PlayStore.ServiceAccountCredentialsConfigured)
-	}
-	return appModel{
-		ID:          types.StringValue(app.ID),
-		ProjectID:   types.StringValue(projectID),
-		Name:        types.StringValue(app.Name),
-		Type:        types.StringValue(app.Type),
-		PackageName: packageName,
-		CreatedAt:   types.Int64Value(app.CreatedAt),
+	model := appModel{
+		ID:        types.StringValue(app.ID),
+		ProjectID: types.StringValue(projectID),
+		Name:      types.StringValue(app.Name),
+		Type:      types.StringValue(app.Type),
+		CreatedAt: types.Int64Value(app.CreatedAt),
+
+		PackageName:           types.StringNull(),
+		BundleID:              types.StringNull(),
+		CredentialsConfigured: types.BoolNull(),
 
 		CredentialsJSONWO:        types.StringNull(),
-		CredentialsJSONWOVersion: credentialsVersion,
-		CredentialsConfigured:    credentialsConfigured,
+		CredentialsJSONWOVersion: prior.CredentialsJSONWOVersion,
+
+		SharedSecretWO:        types.StringNull(),
+		SharedSecretWOVersion: prior.SharedSecretWOVersion,
+
+		SubscriptionPrivateKeyWO:        types.StringNull(),
+		SubscriptionPrivateKeyWOVersion: prior.SubscriptionPrivateKeyWOVersion,
+		SubscriptionKeyID:               prior.SubscriptionKeyID,
+		SubscriptionKeyIssuer:           prior.SubscriptionKeyIssuer,
+		SubscriptionKeyConfigured:       types.BoolNull(),
+
+		AppStoreConnectAPIKeyWO:         types.StringNull(),
+		AppStoreConnectAPIKeyWOVersion:  prior.AppStoreConnectAPIKeyWOVersion,
+		AppStoreConnectAPIKeyID:         prior.AppStoreConnectAPIKeyID,
+		AppStoreConnectAPIKeyIssuer:     prior.AppStoreConnectAPIKeyIssuer,
+		AppStoreConnectAPIKeyConfigured: types.BoolNull(),
+
+		AppStoreConnectVendorNumber: types.StringNull(),
 	}
+	if app.PlayStore != nil {
+		model.PackageName = types.StringValue(app.PlayStore.PackageName)
+		model.CredentialsConfigured = types.BoolValue(app.PlayStore.ServiceAccountCredentialsConfigured)
+	}
+	if app.AppStore != nil {
+		model.BundleID = types.StringValue(app.AppStore.BundleID)
+		model.SubscriptionKeyConfigured = types.BoolValue(app.AppStore.SubscriptionKeyConfigured)
+		model.AppStoreConnectAPIKeyConfigured = types.BoolValue(app.AppStore.AppStoreConnectAPIKeyConfigured)
+		if app.AppStore.AppStoreConnectVendorNumber != nil {
+			model.AppStoreConnectVendorNumber = types.StringValue(*app.AppStore.AppStoreConnectVendorNumber)
+		}
+	}
+	return model
 }

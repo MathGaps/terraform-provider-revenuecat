@@ -1,5 +1,7 @@
 package mockrevenuecat
 
+import "fmt"
+
 // This file maps between request bodies, stored fields, and API
 // representations. It mirrors the JSON contract encoded in
 // internal/revenuecat; a correction there needs a matching one here, and the
@@ -64,6 +66,16 @@ func renderGeneric(obj *object) map[string]any {
 // merge clobbering package_name alongside it.
 const playCredentialsField = "_play_service_account_credentials"
 
+// The App Store's secrets are kept the way the Play credential is: flat,
+// apart from the app_store object, and never rendered. Each key is stored
+// with the id and issuer naming it, as one value, so a test can tell a key
+// that was resent from one that was not.
+const (
+	appStoreSharedSecretField    = "_app_store_shared_secret"
+	appStoreSubscriptionKeyField = "_app_store_subscription_key"
+	appStoreConnectAPIKeyField   = "_app_store_connect_api_key"
+)
+
 func appFields(body map[string]any) map[string]any {
 	fields := copyFields(body, "name", "type")
 	packageName, credentials := splitPlayStore(body)
@@ -73,18 +85,45 @@ func appFields(body map[string]any) map[string]any {
 	if credentials != nil {
 		fields[playCredentialsField] = credentials
 	}
+	if appStore, ok := body["app_store"].(map[string]any); ok {
+		fields["app_store"] = map[string]any{"bundle_id": appStore["bundle_id"]}
+		copyAppStoreSecrets(appStore, fields)
+	}
 	return fields
 }
 
-// appUpdateFields is narrower than appFields: an app's type and package name
-// are part of its identity, so an update must not be able to change them even
-// if one is sent. A credential rotation is the one nested change allowed.
+// appUpdateFields is narrower than appFields: an app's type, package name and
+// bundle are part of its identity, so an update must not be able to change
+// them even if one is sent. Credential rotations, and an App Store app's
+// vendor number, are the nested changes allowed.
 func appUpdateFields(body map[string]any) map[string]any {
 	fields := copyFields(body, "name")
 	if _, credentials := splitPlayStore(body); credentials != nil {
 		fields[playCredentialsField] = credentials
 	}
+	if appStore, ok := body["app_store"].(map[string]any); ok {
+		copyAppStoreSecrets(appStore, fields)
+	}
 	return fields
+}
+
+// copyAppStoreSecrets lifts what an app_store object carries besides its
+// bundle into flat stored fields.
+func copyAppStoreSecrets(appStore, fields map[string]any) {
+	if secret, ok := appStore["shared_secret"]; ok {
+		fields[appStoreSharedSecretField] = secret
+	}
+	if key, ok := appStore["subscription_private_key"].(string); ok {
+		fields[appStoreSubscriptionKeyField] = fmt.Sprintf("%s|%v|%v", key,
+			appStore["subscription_key_id"], appStore["subscription_key_issuer"])
+	}
+	if key, ok := appStore["app_store_connect_api_key"].(string); ok {
+		fields[appStoreConnectAPIKeyField] = fmt.Sprintf("%s|%v|%v", key,
+			appStore["app_store_connect_api_key_id"], appStore["app_store_connect_api_key_issuer"])
+	}
+	if vendor, ok := appStore["app_store_connect_vendor_number"]; ok {
+		fields["app_store_connect_vendor_number"] = vendor
+	}
 }
 
 // splitPlayStore separates the two halves of a play_store object: the package
@@ -103,6 +142,20 @@ func renderApp(obj *object) map[string]any {
 		"type": "",
 	})
 
+	if appStore, ok := obj.Fields["app_store"].(map[string]any); ok {
+		// Rebuilt from what the real API returns: the bundle, the vendor
+		// number and a configured flag per key — never a secret, an id or an
+		// issuer.
+		subscriptionKey, _ := obj.Fields[appStoreSubscriptionKeyField].(string)
+		apiKey, _ := obj.Fields[appStoreConnectAPIKeyField].(string)
+		rendered["app_store"] = map[string]any{
+			"bundle_id":                            appStore["bundle_id"],
+			"subscription_key_configured":          subscriptionKey != "",
+			"app_store_connect_api_key_configured": apiKey != "",
+			"app_store_connect_vendor_number":      obj.Fields["app_store_connect_vendor_number"],
+		}
+	}
+
 	playStore, ok := obj.Fields["play_store"].(map[string]any)
 	if !ok {
 		return rendered
@@ -119,13 +172,15 @@ func renderApp(obj *object) map[string]any {
 }
 
 // validateAppCreate mirrors the real API's discriminated union: "type" alone
-// is not enough, the type-specific object must be present too (this provider
-// only implements "play_store" so far — see revenuecat.ImplementedAppTypes).
+// is not enough, the type-specific object must be present too (for the types
+// this provider implements — see revenuecat.ImplementedAppTypes).
 func validateAppCreate(body map[string]any) *validationError {
-	if appType, _ := body["type"].(string); appType == "play_store" {
-		if _, ok := body["play_store"]; !ok {
-			return &validationError{code: "parameter_error", message: "'play_store' is a required property"}
-		}
+	appType, _ := body["type"].(string)
+	if appType != "play_store" && appType != "app_store" {
+		return nil
+	}
+	if _, ok := body[appType]; !ok {
+		return &validationError{code: "parameter_error", message: "'" + appType + "' is a required property"}
 	}
 	return nil
 }

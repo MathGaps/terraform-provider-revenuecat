@@ -94,13 +94,31 @@ func (s *Server) CreateTestStoreApp(projectID, name string) string {
 	return obj.ID
 }
 
+// validateAppInProject rejects a body whose app_id names no app in the
+// request's project, so an object can never point at another project's app. A
+// null or absent app_id passes: a webhook stores null to mean every app.
+func (s *Server) validateAppInProject(projectID string, body map[string]any) *validationError {
+	raw, present := body["app_id"]
+	if !present || raw == nil {
+		return nil
+	}
+	appID, _ := raw.(string)
+	if _, ok := s.store.get("app", projectID, appID); !ok {
+		return &validationError{code: "parameter_error", message: "app '" + appID + "' does not exist in this project"}
+	}
+	return nil
+}
+
 // validateProductCreate mirrors the real API requiring a title on a product of
 // a Test Store app, which RevenueCat simulates and so cannot name from a store.
 // The app is looked up within the request's project, as the API scopes it.
 func (s *Server) validateProductCreate(projectID string, body map[string]any) *validationError {
+	if verr := s.validateAppInProject(projectID, body); verr != nil {
+		return verr
+	}
 	appID, _ := body["app_id"].(string)
-	app, ok := s.store.get("app", projectID, appID)
-	if !ok || app.Fields["type"] != "test_store" {
+	app, _ := s.store.get("app", projectID, appID)
+	if app == nil || app.Fields["type"] != "test_store" {
 		return nil
 	}
 	if title, _ := body["title"].(string); title == "" {

@@ -233,6 +233,43 @@ func TestPackagesAreScopedToTheirOffering(t *testing.T) {
 	}
 }
 
+func TestAnotherProjectsAppIsRefused(t *testing.T) {
+	h := newHarness(t, Options{})
+	project := h.seedProject()
+	ownApp := h.server.CreateTestStoreApp(project, "Own")
+	otherApp := h.server.CreateTestStoreApp(h.server.CreateProject("Other"), "Other")
+
+	status, _ := h.do("POST", "/v2/projects/"+project+"/products", map[string]any{
+		"store_identifier": "monthly", "app_id": otherApp, "type": "subscription", "title": "Monthly",
+	})
+	if status != http.StatusBadRequest {
+		t.Errorf("product on another project's app returned %d, want 400", status)
+	}
+
+	webhooks := "/v2/projects/" + project + "/integrations/webhooks"
+	status, _ = h.do("POST", webhooks, map[string]any{"name": "hook", "url": "https://example.test", "app_id": otherApp})
+	if status != http.StatusBadRequest {
+		t.Errorf("webhook on another project's app returned %d, want 400", status)
+	}
+
+	status, created := h.do("POST", webhooks, map[string]any{"name": "hook", "url": "https://example.test", "app_id": ownApp})
+	if status != http.StatusCreated {
+		t.Fatalf("webhook on its own project's app returned %d, want 201", status)
+	}
+	id := created["id"].(string)
+
+	status, _ = h.do("POST", webhooks+"/"+id, map[string]any{"app_id": otherApp})
+	if status != http.StatusBadRequest {
+		t.Errorf("moving a webhook to another project's app returned %d, want 400", status)
+	}
+
+	// Null is how a webhook goes back to every app, so it must still pass.
+	status, updated := h.do("POST", webhooks+"/"+id, map[string]any{"app_id": nil})
+	if status != http.StatusOK || updated["app_id"] != nil {
+		t.Errorf("clearing a webhook's app returned %d with app_id %v, want 200 and null", status, updated["app_id"])
+	}
+}
+
 func TestAuthenticationIsRequired(t *testing.T) {
 	h := newHarness(t, Options{})
 	project := h.seedProject()

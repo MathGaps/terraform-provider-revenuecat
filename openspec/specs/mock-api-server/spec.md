@@ -45,6 +45,10 @@ pass by accident when the provider sends a mismatched project or offering.
 - **WHEN** packages are created under two different offerings and a client lists one offering's packages
 - **THEN** only that offering's packages are returned
 
+#### Scenario: App from another project
+- **WHEN** a client creates a product, or creates or updates a webhook integration, naming an `app_id` that belongs to a different project
+- **THEN** the mock responds `400`, while a webhook's `app_id` of `null` is still accepted
+
 ### Requirement: Mock paginates list responses
 The mock SHALL return list responses in the documented envelope, with an `items` array and a
 `next_page` cursor when more items remain. The page size SHALL be configurable so pagination can be

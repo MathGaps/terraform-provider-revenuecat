@@ -342,7 +342,7 @@ func TestAttachAndListProducts(t *testing.T) {
 	_, entitlement := h.do("POST", "/v2/projects/"+project+"/entitlements", map[string]any{"lookup_key": "pro", "display_name": "Pro"})
 	entitlementID := entitlement["id"].(string)
 
-	_, app := h.do("POST", "/v2/projects/"+project+"/apps", map[string]any{"name": "iOS", "type": "app_store"})
+	_, app := h.do("POST", "/v2/projects/"+project+"/apps", map[string]any{"name": "iOS", "type": "app_store", "app_store": map[string]any{"bundle_id": "com.acme.app"}})
 	appID := app["id"].(string)
 
 	productIDs := make([]string, 0, 2)
@@ -390,7 +390,7 @@ func TestReattachingUpdatesEligibilityCriteria(t *testing.T) {
 		map[string]any{"lookup_key": "$rc_monthly", "display_name": "Monthly"})
 	packageID := pkg["id"].(string)
 
-	_, app := h.do("POST", "/v2/projects/"+project+"/apps", map[string]any{"name": "iOS", "type": "app_store"})
+	_, app := h.do("POST", "/v2/projects/"+project+"/apps", map[string]any{"name": "iOS", "type": "app_store", "app_store": map[string]any{"bundle_id": "com.acme.app"}})
 	_, product := h.do("POST", "/v2/projects/"+project+"/products", map[string]any{
 		"store_identifier": "com.acme.m",
 		"app_id":           app["id"].(string),
@@ -491,7 +491,7 @@ func TestProductsChangeTheirNameInPlaceAndNothingElse(t *testing.T) {
 	h := newHarness(t, Options{})
 	project := h.seedProject()
 
-	_, app := h.do("POST", "/v2/projects/"+project+"/apps", map[string]any{"name": "iOS", "type": "app_store"})
+	_, app := h.do("POST", "/v2/projects/"+project+"/apps", map[string]any{"name": "iOS", "type": "app_store", "app_store": map[string]any{"bundle_id": "com.acme.app"}})
 	_, product := h.do("POST", "/v2/projects/"+project+"/products", map[string]any{
 		"store_identifier": "com.acme.m",
 		"app_id":           app["id"].(string),

@@ -33,4 +33,6 @@ data "revenuecat_app" "ios" {
 ### Read-Only
 
 - `type` (String) Store the app belongs to.
+- `package_name` (String) Play Store package identifier, when `type` is `play_store`.
+- `bundle_id` (String) App Store bundle identifier, when `type` is `app_store`.
 - `created_at` (Number) Creation time of the app, in milliseconds since the Unix epoch.

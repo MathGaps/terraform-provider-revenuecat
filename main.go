@@ -22,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	err := providerserver.Serve(context.Background(), provider.New(version), providerserver.ServeOpts{
-		Address: "registry.terraform.io/nmehlei/revenuecat",
+		Address: "registry.opentofu.org/mathgaps/revenuecat",
 		Debug:   debug,
 	})
 	if err != nil {

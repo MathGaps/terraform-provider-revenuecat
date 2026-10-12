@@ -28,7 +28,7 @@ under the same review and version control as the rest of your infrastructure.
 The provider is not published to the Terraform Registry. Build and install it locally:
 
 ```shell
-git clone https://github.com/nmehlei/terraform-provider-revenuecat.git
+git clone https://github.com/MathGaps/terraform-provider-revenuecat.git
 cd terraform-provider-revenuecat
 make install
 ```
@@ -38,7 +38,7 @@ Then point Terraform at your local build with a `dev_overrides` block in `~/.ter
 ```hcl
 provider_installation {
   dev_overrides {
-    "nmehlei/revenuecat" = "/path/to/your/gopath/bin"
+    "mathgaps/revenuecat" = "/path/to/your/gopath/bin"
   }
   direct {}
 }
@@ -52,7 +52,7 @@ With `dev_overrides` in place, skip `terraform init` and run `terraform plan` di
 terraform {
   required_providers {
     revenuecat = {
-      source = "nmehlei/revenuecat"
+      source = "mathgaps/revenuecat"
     }
   }
 }

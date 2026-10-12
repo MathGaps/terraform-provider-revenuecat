@@ -9,7 +9,7 @@
 terraform {
   required_providers {
     revenuecat = {
-      source  = "nmehlei/revenuecat"
+      source  = "mathgaps/revenuecat"
       version = "~> 0.1"
     }
   }

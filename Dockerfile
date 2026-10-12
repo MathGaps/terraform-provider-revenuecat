@@ -3,7 +3,7 @@
 # Building from the module root keeps the image using exactly the handler the
 # Go tests mount in-process, so the two cannot drift apart.
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 
 # Copy the manifests first so dependency download is cached separately from

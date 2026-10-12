@@ -135,6 +135,18 @@ func (s *Server) AppStoreSecrets(appID string) (sharedSecret, subscriptionKey, a
 	return sharedSecret, subscriptionKey, apiKey
 }
 
+// WebhookAuthorizationHeader returns the authorization header the mock holds
+// for a webhook, which no HTTP response reveals, so a test can assert the
+// provider sent it — and resent it on a rotation.
+func (s *Server) WebhookAuthorizationHeader(webhookID string) string {
+	obj, ok := s.store.get("webhook_integration", "", webhookID)
+	if !ok {
+		return ""
+	}
+	header, _ := obj.Fields[webhookAuthorizationField].(string)
+	return header
+}
+
 // RequestCount reports how many requests the server has served, so a test can
 // assert that a retry actually happened.
 func (s *Server) RequestCount() int {

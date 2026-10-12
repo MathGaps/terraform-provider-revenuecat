@@ -429,3 +429,41 @@ func productIDsFromBody(body map[string]any) []string {
 	}
 	return out
 }
+
+// webhookAuthorizationField is where the mock keeps a webhook's authorization
+// header. It is never rendered, because the real API never returns it.
+const webhookAuthorizationField = "_authorization_header"
+
+// webhookIntegrationFields serves create and update alike: every field is
+// changeable in place, and a null environment, app or event list is stored as
+// null, which is how a webhook goes back to "all".
+func webhookIntegrationFields(body map[string]any) map[string]any {
+	fields := copyFields(body, "name", "url", "environment", "event_types", "app_id")
+	if header, ok := body["authorization_header"]; ok {
+		fields[webhookAuthorizationField] = header
+	}
+	return fields
+}
+
+// validateWebhookIntegrationCreate mirrors the real API requiring a name and
+// a URL.
+func validateWebhookIntegrationCreate(body map[string]any) *validationError {
+	for _, name := range []string{"name", "url"} {
+		if _, ok := body[name]; !ok {
+			return &validationError{code: "parameter_error", message: "'" + name + "' is a required property"}
+		}
+	}
+	return nil
+}
+
+func renderWebhookIntegration(obj *object) map[string]any {
+	rendered := withFields(base(obj, "webhook_integration"), obj, map[string]any{
+		"name": "",
+		"url":  "",
+	})
+	// Rendered whether set or not, null included, as the real API does.
+	for _, name := range []string{"environment", "event_types", "app_id"} {
+		rendered[name] = obj.Fields[name]
+	}
+	return rendered
+}

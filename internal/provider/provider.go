@@ -197,6 +197,7 @@ func (p *revenueCatProvider) Resources(_ context.Context) []func() resource.Reso
 		NewPackageResource,
 		NewEntitlementProductAttachmentResource,
 		NewPackageProductAttachmentResource,
+		NewWebhookIntegrationResource,
 	}
 }
 

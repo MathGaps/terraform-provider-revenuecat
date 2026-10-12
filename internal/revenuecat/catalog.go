@@ -291,3 +291,41 @@ func (c *Client) ListPackageProducts(ctx context.Context, projectID, packageID s
 	}
 	return products, nil
 }
+
+// --- Webhook integrations -------------------------------------------------
+
+func webhookIntegrationsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%s/integrations/webhooks", url.PathEscape(projectID))
+}
+
+// CreateWebhookIntegration creates a webhook in a project.
+func (c *Client) CreateWebhookIntegration(ctx context.Context, projectID string, req CreateWebhookIntegrationRequest) (*WebhookIntegration, error) {
+	var out WebhookIntegration
+	if err := c.do(ctx, "POST", webhookIntegrationsPath(projectID), nil, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetWebhookIntegration reads a single webhook.
+func (c *Client) GetWebhookIntegration(ctx context.Context, projectID, webhookID string) (*WebhookIntegration, error) {
+	var out WebhookIntegration
+	if err := c.do(ctx, "GET", webhookIntegrationsPath(projectID)+"/"+url.PathEscape(webhookID), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateWebhookIntegration changes a webhook in place.
+func (c *Client) UpdateWebhookIntegration(ctx context.Context, projectID, webhookID string, req UpdateWebhookIntegrationRequest) (*WebhookIntegration, error) {
+	var out WebhookIntegration
+	if err := c.do(ctx, "POST", webhookIntegrationsPath(projectID)+"/"+url.PathEscape(webhookID), nil, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteWebhookIntegration removes a webhook.
+func (c *Client) DeleteWebhookIntegration(ctx context.Context, projectID, webhookID string) error {
+	return c.do(ctx, "DELETE", webhookIntegrationsPath(projectID)+"/"+url.PathEscape(webhookID), nil, nil, nil)
+}

@@ -84,6 +84,22 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 	case "packages":
 		s.routePackages(w, r, projectID, rest)
 
+	case "integrations":
+		// Webhooks are the one integration served: /integrations/webhooks[/<id>].
+		if len(rest) == 0 || rest[0] != "webhooks" {
+			s.notFound(w, "integration")
+			return
+		}
+		s.routeCollection(w, r, collectionSpec{
+			kind:           "webhook_integration",
+			projectID:      projectID,
+			basePath:       "/v2/projects/" + projectID + "/integrations/webhooks",
+			render:         renderWebhookIntegration,
+			create:         webhookIntegrationFields,
+			update:         webhookIntegrationFields,
+			validateCreate: validateWebhookIntegrationCreate,
+		}, rest[1:])
+
 	default:
 		s.notFound(w, "collection "+collection)
 	}

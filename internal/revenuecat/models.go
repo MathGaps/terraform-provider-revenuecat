@@ -378,3 +378,55 @@ type attachProductsRequest struct {
 type attachPackageProductsRequest struct {
 	Products []PackageProduct `json:"products"`
 }
+
+// Webhook environments RevenueCat accepts. A null environment sends events of
+// both.
+const (
+	WebhookEnvironmentProduction = "production"
+	WebhookEnvironmentSandbox    = "sandbox"
+)
+
+// WebhookEnvironments lists every accepted value of a webhook's environment.
+var WebhookEnvironments = []string{WebhookEnvironmentProduction, WebhookEnvironmentSandbox}
+
+// WebhookIntegration is a webhook RevenueCat sends a project's events to.
+//
+// The authorization header it sends is never returned, so it has no field
+// here (see CreateWebhookIntegrationRequest). Null AppID, Environment and
+// EventTypes each mean "all": every app, both environments, every event.
+type WebhookIntegration struct {
+	ID          string   `json:"id"`
+	ProjectID   string   `json:"project_id"`
+	Name        string   `json:"name"`
+	URL         string   `json:"url"`
+	Environment *string  `json:"environment"`
+	EventTypes  []string `json:"event_types"`
+	AppID       *string  `json:"app_id"`
+	CreatedAt   int64    `json:"created_at"`
+}
+
+// CreateWebhookIntegrationRequest is the payload for creating a webhook.
+// AuthorizationHeader is sent and never returned: it is the static value the
+// receiving server checks a delivery for.
+type CreateWebhookIntegrationRequest struct {
+	Name                string   `json:"name"`
+	URL                 string   `json:"url"`
+	AuthorizationHeader *string  `json:"authorization_header,omitempty"`
+	Environment         *string  `json:"environment,omitempty"`
+	EventTypes          []string `json:"event_types,omitempty"`
+	AppID               *string  `json:"app_id,omitempty"`
+}
+
+// UpdateWebhookIntegrationRequest is the payload for updating a webhook.
+// Environment, event types and app are always sent, null included, because
+// null is how a webhook goes back to "all"; omitting them would leave a
+// narrowed webhook narrowed. The authorization header is the exception: it is
+// omitted unless it is being resent, since a null would clear it.
+type UpdateWebhookIntegrationRequest struct {
+	Name                string   `json:"name"`
+	URL                 string   `json:"url"`
+	AuthorizationHeader *string  `json:"authorization_header,omitempty"`
+	Environment         *string  `json:"environment"`
+	EventTypes          []string `json:"event_types"`
+	AppID               *string  `json:"app_id"`
+}

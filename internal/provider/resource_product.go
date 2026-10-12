@@ -178,7 +178,7 @@ func (r *productResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(plan.ProjectID.ValueString(), product, plan.Title))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(plan.ProjectID.ValueString(), product, plan.Title, plan.SubscriptionDuration))...)
 }
 
 func (r *productResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -198,7 +198,7 @@ func (r *productResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(state.ProjectID.ValueString(), product, state.Title))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(state.ProjectID.ValueString(), product, state.Title, state.SubscriptionDuration))...)
 }
 
 // Update handles the in-place changes: a display name, which RevenueCat's
@@ -228,7 +228,7 @@ func (r *productResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(state.ProjectID.ValueString(), product, plan.Title))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(state.ProjectID.ValueString(), product, plan.Title, plan.SubscriptionDuration))...)
 }
 
 func (r *productResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -256,11 +256,15 @@ func (r *productResource) ImportState(ctx context.Context, req resource.ImportSt
 }
 
 // productToModel maps an API product onto the resource model. The title comes
-// from configuration or state, because RevenueCat never returns it.
-func productToModel(projectID string, product *revenuecat.Product, title types.String) productModel {
-	duration := types.StringNull()
+// from configuration or state, because RevenueCat never returns it. So does
+// the duration whenever RevenueCat reports none — for a product it ignores the
+// duration for, the configured one stands rather than reading back as a
+// change on every plan.
+func productToModel(projectID string, product *revenuecat.Product, title, duration types.String) productModel {
 	if product.Subscription != nil && product.Subscription.Duration != nil {
 		duration = types.StringValue(*product.Subscription.Duration)
+	} else if duration.IsUnknown() {
+		duration = types.StringNull()
 	}
 	return productModel{
 		ID:              types.StringValue(product.ID),

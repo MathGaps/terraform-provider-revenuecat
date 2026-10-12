@@ -63,13 +63,15 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 
 	case "products":
 		s.routeCollection(w, r, collectionSpec{
-			kind:           "product",
-			projectID:      projectID,
-			basePath:       "/v2/projects/" + projectID + "/products",
-			render:         renderProduct,
-			create:         productFields,
-			update:         productUpdateFields,
-			validateCreate: s.validateProductCreate,
+			kind:      "product",
+			projectID: projectID,
+			basePath:  "/v2/projects/" + projectID + "/products",
+			render:    renderProduct,
+			create:    productFields,
+			update:    productUpdateFields,
+			validateCreate: func(body map[string]any) *validationError {
+				return s.validateProductCreate(projectID, body)
+			},
 			validateUpdate: validateProductUpdate,
 		}, rest)
 

@@ -82,3 +82,28 @@ resource "revenuecat_product" "monthly" {
 
 	env.checkNoObjectsRemain(t, "product")
 }
+
+// TestE2EProductKeepsADurationRevenueCatDoesNotReport covers a product that
+// RevenueCat reports no duration for — here a one-time product — configured
+// with one anyway. The configured value stands, rather than the apply failing
+// as inconsistent and every later plan reading it back as a change.
+func TestE2EProductKeepsADurationRevenueCatDoesNotReport(t *testing.T) {
+	requireTerraform(t)
+	env := newE2EEnv(t)
+	testStore := env.mock.CreateTestStoreApp(env.projectID, "Test Store")
+
+	env.steps(t, resource.TestStep{
+		Config: fmt.Sprintf(`
+resource "revenuecat_product" "credits" {
+  project_id            = %q
+  app_id                = %q
+  store_identifier      = "credits"
+  type                  = "one_time"
+  title                 = "Credits"
+  subscription_duration = "P1M"
+}
+`, env.projectID, testStore),
+		ConfigPlanChecks: expectEmptyPlan(),
+		Check:            resource.TestCheckResourceAttr("revenuecat_product.credits", "subscription_duration", "P1M"),
+	})
+}

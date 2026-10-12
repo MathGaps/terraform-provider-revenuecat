@@ -96,9 +96,10 @@ func (s *Server) CreateTestStoreApp(projectID, name string) string {
 
 // validateProductCreate mirrors the real API requiring a title on a product of
 // a Test Store app, which RevenueCat simulates and so cannot name from a store.
-func (s *Server) validateProductCreate(body map[string]any) *validationError {
+// The app is looked up within the request's project, as the API scopes it.
+func (s *Server) validateProductCreate(projectID string, body map[string]any) *validationError {
 	appID, _ := body["app_id"].(string)
-	app, ok := s.store.get("app", "", appID)
+	app, ok := s.store.get("app", projectID, appID)
 	if !ok || app.Fields["type"] != "test_store" {
 		return nil
 	}

@@ -272,7 +272,7 @@ func (d *productDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		product = found
 	}
 
-	model := productToModel(projectID, product, types.StringNull())
+	model := productToModel(projectID, product, types.StringNull(), types.StringNull())
 	resp.Diagnostics.Append(resp.State.Set(ctx, productDataModel{
 		ID:                   model.ID,
 		ProjectID:            model.ProjectID,

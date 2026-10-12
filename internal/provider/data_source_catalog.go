@@ -208,8 +208,25 @@ func (d *productDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 				MarkdownDescription: "Creation time of the product, in milliseconds since the Unix epoch.",
 				Computed:            true,
 			},
+			"subscription_duration": schema.StringAttribute{
+				MarkdownDescription: "Billing period of a subscription product in ISO-8601, when RevenueCat knows it.",
+				Computed:            true,
+			},
 		},
 	}
+}
+
+// productDataModel is the product data source's own model: it reads what the
+// API returns, so it has no title, which RevenueCat never returns.
+type productDataModel struct {
+	ID                   types.String `tfsdk:"id"`
+	ProjectID            types.String `tfsdk:"project_id"`
+	AppID                types.String `tfsdk:"app_id"`
+	StoreIdentifier      types.String `tfsdk:"store_identifier"`
+	Type                 types.String `tfsdk:"type"`
+	DisplayName          types.String `tfsdk:"display_name"`
+	CreatedAt            types.Int64  `tfsdk:"created_at"`
+	SubscriptionDuration types.String `tfsdk:"subscription_duration"`
 }
 
 func (d *productDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
@@ -217,7 +234,7 @@ func (d *productDataSource) Configure(_ context.Context, req datasource.Configur
 }
 
 func (d *productDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var config productModel
+	var config productDataModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -255,7 +272,17 @@ func (d *productDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		product = found
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(projectID, product))...)
+	model := productToModel(projectID, product, types.StringNull(), types.StringNull())
+	resp.Diagnostics.Append(resp.State.Set(ctx, productDataModel{
+		ID:                   model.ID,
+		ProjectID:            model.ProjectID,
+		AppID:                model.AppID,
+		StoreIdentifier:      model.StoreIdentifier,
+		Type:                 model.Type,
+		DisplayName:          model.DisplayName,
+		CreatedAt:            model.CreatedAt,
+		SubscriptionDuration: model.SubscriptionDuration,
+	})...)
 }
 
 // --- Entitlement ----------------------------------------------------------

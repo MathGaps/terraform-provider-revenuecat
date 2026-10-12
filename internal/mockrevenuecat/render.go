@@ -130,17 +130,55 @@ func validateAppCreate(body map[string]any) *validationError {
 	return nil
 }
 
+// productTitleField is where the mock keeps a product's title. It is never
+// rendered, because the real API never returns a title: a provider that reads
+// it back from a response would pass against an echoing fake and drift against
+// RevenueCat.
+const productTitleField = "_title"
+
 func productFields(body map[string]any) map[string]any {
-	return copyFields(body, "store_identifier", "app_id", "type", "display_name")
+	fields := copyFields(body, "store_identifier", "app_id", "type", "display_name")
+	if title, ok := body["title"]; ok {
+		fields[productTitleField] = title
+	}
+	if subscription, ok := body["subscription"].(map[string]any); ok {
+		fields["subscription_duration"] = subscription["duration"]
+	}
+	return fields
+}
+
+// productUpdateFields mirrors the update endpoint, which changes a display
+// name and nothing that names the product in its store.
+func productUpdateFields(body map[string]any) map[string]any {
+	return copyFields(body, "display_name")
+}
+
+// validateProductUpdate mirrors the real API rejecting a product's identity on
+// update: its store identifier and app are fixed once it exists.
+func validateProductUpdate(body map[string]any) *validationError {
+	for _, name := range []string{"store_identifier", "app_id", "title", "subscription"} {
+		if _, ok := body[name]; ok {
+			return &validationError{code: "parameter_error", message: "Additional properties are not allowed ('" + name + "' was unexpected)"}
+		}
+	}
+	return nil
 }
 
 func renderProduct(obj *object) map[string]any {
-	return withFields(base(obj, "product"), obj, map[string]any{
+	rendered := withFields(base(obj, "product"), obj, map[string]any{
 		"store_identifier": "",
 		"app_id":           "",
 		"type":             "",
 		"display_name":     "",
 	})
+	if obj.Fields["type"] == "subscription" {
+		rendered["subscription"] = map[string]any{
+			"duration":              obj.Fields["subscription_duration"],
+			"grace_period_duration": nil,
+			"trial_duration":        nil,
+		}
+	}
+	return rendered
 }
 
 func entitlementFields(body map[string]any) map[string]any {

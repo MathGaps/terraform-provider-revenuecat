@@ -487,7 +487,7 @@ func TestHealthEndpointNeedsNoCredential(t *testing.T) {
 	}
 }
 
-func TestProductsCannotBeUpdated(t *testing.T) {
+func TestProductsChangeTheirNameInPlaceAndNothingElse(t *testing.T) {
 	h := newHarness(t, Options{})
 	project := h.seedProject()
 
@@ -497,12 +497,51 @@ func TestProductsCannotBeUpdated(t *testing.T) {
 		"app_id":           app["id"].(string),
 		"type":             "subscription",
 	})
+	itemPath := "/v2/projects/" + project + "/products/" + product["id"].(string)
 
-	// The mock refuses what the real API is assumed not to support, so a
-	// provider that started calling it would fail here rather than silently.
-	status, _ := h.do("POST", "/v2/projects/"+project+"/products/"+product["id"].(string),
-		map[string]any{"display_name": "Renamed"})
-	if status != http.StatusMethodNotAllowed {
-		t.Errorf("product update returned %d, want 405", status)
+	status, renamed := h.do("POST", itemPath, map[string]any{"display_name": "Renamed"})
+	if status != http.StatusOK || renamed["display_name"] != "Renamed" {
+		t.Errorf("product rename returned %d %v, want 200 with the new name", status, renamed)
+	}
+
+	// The store identifier names the product in its store; the API refuses it.
+	status, _ = h.do("POST", itemPath, map[string]any{"store_identifier": "com.acme.other"})
+	if status != http.StatusBadRequest {
+		t.Errorf("product store_identifier update returned %d, want 400", status)
+	}
+}
+
+func TestTestStoreProductsNeedATitleTheAPINeverReturns(t *testing.T) {
+	h := newHarness(t, Options{})
+	project := h.seedProject()
+	testStore := h.server.CreateTestStoreApp(project, "Test Store")
+
+	status, _ := h.do("POST", "/v2/projects/"+project+"/products", map[string]any{
+		"store_identifier": "monthly",
+		"app_id":           testStore,
+		"type":             "subscription",
+	})
+	if status != http.StatusBadRequest {
+		t.Errorf("Test Store product with no title returned %d, want 400", status)
+	}
+
+	status, product := h.do("POST", "/v2/projects/"+project+"/products", map[string]any{
+		"store_identifier": "monthly",
+		"app_id":           testStore,
+		"type":             "subscription",
+		"title":            "Pro Monthly",
+		"subscription":     map[string]any{"duration": "P1M"},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("Test Store product with a title returned %d, want 201", status)
+	}
+	if _, ok := product["title"]; ok {
+		t.Errorf("product response carries a title, which the real API never returns: %v", product)
+	}
+	if got := product["subscription"].(map[string]any)["duration"]; got != "P1M" {
+		t.Errorf("subscription duration = %v, want P1M", got)
+	}
+	if got := h.server.ProductTitle(product["id"].(string)); got != "Pro Monthly" {
+		t.Errorf("stored title = %q, want Pro Monthly", got)
 	}
 }

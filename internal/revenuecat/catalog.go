@@ -81,6 +81,15 @@ func (c *Client) GetProduct(ctx context.Context, projectID, productID string) (*
 	return &out, nil
 }
 
+// UpdateProduct changes a product's display name in place.
+func (c *Client) UpdateProduct(ctx context.Context, projectID, productID string, req UpdateProductRequest) (*Product, error) {
+	var out Product
+	if err := c.do(ctx, "POST", fmt.Sprintf("/projects/%s/products/%s", url.PathEscape(projectID), url.PathEscape(productID)), nil, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // DeleteProduct removes a product.
 func (c *Client) DeleteProduct(ctx context.Context, projectID, productID string) error {
 	return c.do(ctx, "DELETE", fmt.Sprintf("/projects/%s/products/%s", url.PathEscape(projectID), url.PathEscape(productID)), nil, nil, nil)

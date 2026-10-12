@@ -11,7 +11,7 @@ Manages a store product within a RevenueCat project. A product mirrors an in-app
 subscription that already exists in the underlying store.
 
 ~> RevenueCat does not support changing a product's identity, so every attribute other than
-`display_name` forces a new product when changed.
+`display_name` forces a new product when changed. `display_name` changes in place.
 
 ## Example Usage
 
@@ -42,6 +42,22 @@ resource "revenuecat_product" "monthly_android" {
 }
 ```
 
+A product in a **Test Store** app is simulated by RevenueCat rather than read from a store, so it
+needs a `title` (the API refuses to create one without it) and, for a subscription, the
+`subscription_duration` its simulated renewals run on. Both are ignored for every other store.
+
+```terraform
+resource "revenuecat_product" "monthly_test_store" {
+  project_id            = data.revenuecat_project.main.id
+  app_id                = data.revenuecat_app.test_store.id
+  store_identifier      = "pro_monthly"
+  type                  = "subscription"
+  display_name          = "Pro Monthly (Test Store)"
+  title                 = "Pro Monthly"
+  subscription_duration = "P1M"
+}
+```
+
 ## Schema
 
 ### Required
@@ -56,6 +72,15 @@ resource "revenuecat_product" "monthly_android" {
 ### Optional
 
 - `display_name` (String) Human-readable name of the product, shown in the RevenueCat dashboard.
+  Changed in place. Left out, the product keeps the name it has.
+- `title` (String) User-facing title of a Test Store product, which RevenueCat requires to create
+  one; ignored for every other store. RevenueCat never returns it, so it is read from the
+  configuration: changing a title this provider created forces a new product, and an imported
+  product takes the configured title without one.
+- `subscription_duration` (String) Billing period of a Test Store subscription product, in
+  ISO-8601: one of `P1W`, `P1M`, `P2M`, `P3M`, `P6M`, `P1Y`. RevenueCat simulates renewals on it,
+  and ignores it for every other store. Read back from RevenueCat, which reports it for products
+  of other stores too. Changing it forces a new product.
 
 ### Read-Only
 

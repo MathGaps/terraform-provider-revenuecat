@@ -68,7 +68,11 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 			basePath:  "/v2/projects/" + projectID + "/products",
 			render:    renderProduct,
 			create:    productFields,
-			update:    nil, // RevenueCat exposes no product update endpoint
+			update:    productUpdateFields,
+			validateCreate: func(body map[string]any) *validationError {
+				return s.validateProductCreate(projectID, body)
+			},
+			validateUpdate: validateProductUpdate,
 		}, rest)
 
 	case "entitlements":

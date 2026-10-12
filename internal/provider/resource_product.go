@@ -39,6 +39,9 @@ type productModel struct {
 	Type            types.String `tfsdk:"type"`
 	DisplayName     types.String `tfsdk:"display_name"`
 	CreatedAt       types.Int64  `tfsdk:"created_at"`
+
+	Title                types.String `tfsdk:"title"`
+	SubscriptionDuration types.String `tfsdk:"subscription_duration"`
 }
 
 func (r *productResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -49,7 +52,9 @@ func (r *productResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages a store product within a RevenueCat project.\n\n" +
 			"RevenueCat does not support changing a product's identity, so every attribute other " +
-			"than `display_name` forces a new product when changed.",
+			"than `display_name` forces a new product when changed.\n\n" +
+			"A product in a Test Store app is simulated by RevenueCat rather than read from a store, " +
+			"so it needs `title`, and a subscription one needs `subscription_duration` to renew.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "RevenueCat identifier of the product.",
@@ -98,8 +103,41 @@ func (r *productResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				},
 			},
 			"display_name": schema.StringAttribute{
-				MarkdownDescription: "Human-readable name of the product, shown in the RevenueCat dashboard.",
-				Optional:            true,
+				MarkdownDescription: "Human-readable name of the product, shown in the RevenueCat dashboard. " +
+					"Changed in place. Left out, the product keeps the name it has.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"title": schema.StringAttribute{
+				MarkdownDescription: "User-facing title of a Test Store product, which RevenueCat requires " +
+					"to create one; ignored for every other store. RevenueCat never returns it, so it is " +
+					"read from the configuration: changing a title this provider created forces a new " +
+					"product, and an imported product takes the configured title without one.",
+				Optional: true,
+				PlanModifiers: []planmodifier.String{
+					requiresReplaceIfKnown(),
+				},
+			},
+			"subscription_duration": schema.StringAttribute{
+				MarkdownDescription: fmt.Sprintf(
+					"Billing period of a Test Store subscription product, in ISO-8601: one of `%s`. "+
+						"RevenueCat simulates renewals on it, and ignores it for every other store. "+
+						"Read back from RevenueCat, which reports it for products of other stores too. "+
+						"Changing it forces a new product.",
+					joinBackticked(revenuecat.SubscriptionDurations),
+				),
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(revenuecat.SubscriptionDurations...),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+					requiresReplaceIfKnown(),
+				},
 			},
 			"created_at": schema.Int64Attribute{
 				MarkdownDescription: "Creation time of the product, in milliseconds since the Unix epoch.",
@@ -123,18 +161,24 @@ func (r *productResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	product, err := r.client.CreateProduct(ctx, plan.ProjectID.ValueString(), revenuecat.CreateProductRequest{
+	create := revenuecat.CreateProductRequest{
 		StoreIdentifier: plan.StoreIdentifier.ValueString(),
 		AppID:           plan.AppID.ValueString(),
 		Type:            plan.Type.ValueString(),
 		DisplayName:     optionalString(plan.DisplayName),
-	})
+		Title:           optionalString(plan.Title),
+	}
+	if duration := optionalString(plan.SubscriptionDuration); duration != nil {
+		create.Subscription = &revenuecat.ProductSubscriptionInput{Duration: *duration}
+	}
+
+	product, err := r.client.CreateProduct(ctx, plan.ProjectID.ValueString(), create)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to create the RevenueCat product", err.Error())
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(plan.ProjectID.ValueString(), product))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(plan.ProjectID.ValueString(), product, plan.Title, plan.SubscriptionDuration))...)
 }
 
 func (r *productResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -154,13 +198,13 @@ func (r *productResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(state.ProjectID.ValueString(), product))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(state.ProjectID.ValueString(), product, state.Title, state.SubscriptionDuration))...)
 }
 
-// Update handles the only in-place change the API supports. Every other
-// attribute carries RequiresReplace, so a plan reaching Update can only be a
-// display name change; RevenueCat exposes no product update endpoint, so the
-// new value is recorded in state directly.
+// Update handles the in-place changes: a display name, which RevenueCat's
+// update endpoint takes, and a title arriving on a product whose title was
+// unknown (an imported one), which RevenueCat cannot change and so is only
+// recorded. Every other attribute forces a new product.
 func (r *productResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state productModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -169,9 +213,22 @@ func (r *productResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	plan.ID = state.ID
-	plan.CreatedAt = state.CreatedAt
-	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	var (
+		product *revenuecat.Product
+		err     error
+	)
+	if !plan.DisplayName.IsUnknown() && !plan.DisplayName.IsNull() && !plan.DisplayName.Equal(state.DisplayName) {
+		product, err = r.client.UpdateProduct(ctx, state.ProjectID.ValueString(), state.ID.ValueString(),
+			revenuecat.UpdateProductRequest{DisplayName: plan.DisplayName.ValueString()})
+	} else {
+		product, err = r.client.GetProduct(ctx, state.ProjectID.ValueString(), state.ID.ValueString())
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to update the RevenueCat product", err.Error())
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, productToModel(state.ProjectID.ValueString(), product, plan.Title, plan.SubscriptionDuration))...)
 }
 
 func (r *productResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -198,7 +255,17 @@ func (r *productResource) ImportState(ctx context.Context, req resource.ImportSt
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
 }
 
-func productToModel(projectID string, product *revenuecat.Product) productModel {
+// productToModel maps an API product onto the resource model. The title comes
+// from configuration or state, because RevenueCat never returns it. So does
+// the duration whenever RevenueCat reports none — for a product it ignores the
+// duration for, the configured one stands rather than reading back as a
+// change on every plan.
+func productToModel(projectID string, product *revenuecat.Product, title, duration types.String) productModel {
+	if product.Subscription != nil && product.Subscription.Duration != nil {
+		duration = types.StringValue(*product.Subscription.Duration)
+	} else if duration.IsUnknown() {
+		duration = types.StringNull()
+	}
 	return productModel{
 		ID:              types.StringValue(product.ID),
 		ProjectID:       types.StringValue(projectID),
@@ -207,5 +274,8 @@ func productToModel(projectID string, product *revenuecat.Product) productModel 
 		Type:            types.StringValue(product.Type),
 		DisplayName:     stringOrNull(product.DisplayName),
 		CreatedAt:       types.Int64Value(product.CreatedAt),
+
+		Title:                title,
+		SubscriptionDuration: duration,
 	}
 }

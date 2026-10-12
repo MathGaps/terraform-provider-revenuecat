@@ -153,12 +153,19 @@ func (r *webhookIntegrationResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
+	// Read before the call: an empty list is how the API says "every event",
+	// so a list that failed to convert must stop here rather than widen it.
+	eventTypes := stringSetFromFramework(ctx, plan.EventTypes, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	webhook, err := r.client.CreateWebhookIntegration(ctx, plan.ProjectID.ValueString(), revenuecat.CreateWebhookIntegrationRequest{
 		Name:                plan.Name.ValueString(),
 		URL:                 plan.URL.ValueString(),
 		AuthorizationHeader: optionalString(config.AuthorizationHeaderWO),
 		Environment:         optionalString(plan.Environment),
-		EventTypes:          stringSetFromFramework(ctx, plan.EventTypes, &resp.Diagnostics),
+		EventTypes:          eventTypes,
 		AppID:               optionalString(plan.AppID),
 	})
 	if err != nil {
@@ -204,6 +211,9 @@ func (r *webhookIntegrationResource) Update(ctx context.Context, req resource.Up
 		Environment: optionalString(plan.Environment),
 		EventTypes:  stringSetFromFramework(ctx, plan.EventTypes, &resp.Diagnostics),
 		AppID:       optionalString(plan.AppID),
+	}
+	if resp.Diagnostics.HasError() {
+		return
 	}
 	// The header is resent only when its version moved: sending it on every
 	// update would push it over the wire on an unrelated rename, and never

@@ -86,6 +86,39 @@ func (s *Server) CreateProject(name string) string {
 	return obj.ID
 }
 
+// CreateTestStoreApp adds a Test Store app to a project and returns its
+// identifier. RevenueCat makes a project's Test Store itself and its API cannot
+// create one, so tests seed it directly, as they do projects.
+func (s *Server) CreateTestStoreApp(projectID, name string) string {
+	obj := s.store.create("app", projectID, map[string]any{"name": name, "type": "test_store"})
+	return obj.ID
+}
+
+// validateProductCreate mirrors the real API requiring a title on a product of
+// a Test Store app, which RevenueCat simulates and so cannot name from a store.
+func (s *Server) validateProductCreate(body map[string]any) *validationError {
+	appID, _ := body["app_id"].(string)
+	app, ok := s.store.get("app", "", appID)
+	if !ok || app.Fields["type"] != "test_store" {
+		return nil
+	}
+	if title, _ := body["title"].(string); title == "" {
+		return &validationError{code: "parameter_error", message: "'title' is required for Test Store products"}
+	}
+	return nil
+}
+
+// ProductTitle returns the title the mock holds for a product, which no HTTP
+// response reveals, so a test can assert the provider sent it.
+func (s *Server) ProductTitle(productID string) string {
+	obj, ok := s.store.get("product", "", productID)
+	if !ok {
+		return ""
+	}
+	title, _ := obj.Fields[productTitleField].(string)
+	return title
+}
+
 // RequestCount reports how many requests the server has served, so a test can
 // assert that a retry actually happened.
 func (s *Server) RequestCount() int {

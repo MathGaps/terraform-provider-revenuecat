@@ -133,22 +133,56 @@ type UpdateAppRequest struct {
 	PlayStore *PlayStoreConfig `json:"play_store,omitempty"`
 }
 
+// Subscription durations RevenueCat accepts for a Test Store subscription
+// product, in ISO-8601.
+var SubscriptionDurations = []string{"P1W", "P1M", "P2M", "P3M", "P6M", "P1Y"}
+
 // Product is a store product belonging to an app within a project.
+//
+// The API never returns a product's title, so it has no field here: a title is
+// sent once on create (CreateProductRequest) and is never readable afterwards.
 type Product struct {
-	ID              string `json:"id"`
-	StoreIdentifier string `json:"store_identifier"`
-	Type            string `json:"type"`
-	DisplayName     string `json:"display_name"`
-	AppID           string `json:"app_id"`
-	CreatedAt       int64  `json:"created_at"`
+	ID              string               `json:"id"`
+	StoreIdentifier string               `json:"store_identifier"`
+	Type            string               `json:"type"`
+	DisplayName     string               `json:"display_name"`
+	AppID           string               `json:"app_id"`
+	CreatedAt       int64                `json:"created_at"`
+	Subscription    *ProductSubscription `json:"subscription,omitempty"`
+}
+
+// ProductSubscription is the subscription detail the API returns for a
+// subscription product. Duration is null when RevenueCat does not know it.
+type ProductSubscription struct {
+	Duration *string `json:"duration"`
 }
 
 // CreateProductRequest is the payload for creating a product.
+//
+// Title and Subscription exist for Test Store products, which RevenueCat
+// simulates rather than reading from a store: a Test Store product is a 400
+// without a title, and its duration is what a simulated renewal runs on. The
+// API ignores both for every other store.
 type CreateProductRequest struct {
-	StoreIdentifier string  `json:"store_identifier"`
-	AppID           string  `json:"app_id"`
-	Type            string  `json:"type"`
-	DisplayName     *string `json:"display_name,omitempty"`
+	StoreIdentifier string                    `json:"store_identifier"`
+	AppID           string                    `json:"app_id"`
+	Type            string                    `json:"type"`
+	DisplayName     *string                   `json:"display_name,omitempty"`
+	Title           *string                   `json:"title,omitempty"`
+	Subscription    *ProductSubscriptionInput `json:"subscription,omitempty"`
+}
+
+// ProductSubscriptionInput is the subscription detail sent when creating a
+// Test Store subscription product.
+type ProductSubscriptionInput struct {
+	Duration string `json:"duration"`
+}
+
+// UpdateProductRequest is the payload for updating a product. The API accepts
+// display_name and type here; type is part of this provider's identity for a
+// product (it forces a new one), so only the display name is ever sent.
+type UpdateProductRequest struct {
+	DisplayName string `json:"display_name"`
 }
 
 // Entitlement is an entitlement belonging to a project.

@@ -63,12 +63,14 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 
 	case "products":
 		s.routeCollection(w, r, collectionSpec{
-			kind:      "product",
-			projectID: projectID,
-			basePath:  "/v2/projects/" + projectID + "/products",
-			render:    renderProduct,
-			create:    productFields,
-			update:    nil, // RevenueCat exposes no product update endpoint
+			kind:           "product",
+			projectID:      projectID,
+			basePath:       "/v2/projects/" + projectID + "/products",
+			render:         renderProduct,
+			create:         productFields,
+			update:         productUpdateFields,
+			validateCreate: s.validateProductCreate,
+			validateUpdate: validateProductUpdate,
 		}, rest)
 
 	case "entitlements":

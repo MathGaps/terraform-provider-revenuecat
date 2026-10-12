@@ -36,3 +36,5 @@ data "revenuecat_product" "monthly" {
 - `type` (String) Type of the product.
 - `display_name` (String) Human-readable name of the product.
 - `created_at` (Number) Creation time of the product, in milliseconds since the Unix epoch.
+- `subscription_duration` (String) Billing period of a subscription product in ISO-8601, when
+  RevenueCat knows it.

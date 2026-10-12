@@ -1,5 +1,9 @@
 # Terraform Provider for RevenueCat
 
+> **This is MathGaps's fork** of [nmehlei/terraform-provider-revenuecat](https://github.com/nmehlei/terraform-provider-revenuecat),
+> released to the OpenTofu Registry as `mathgaps/revenuecat`. The provider is upstream's work;
+> [FORK.md](FORK.md) lists what differs, and [CHANGELOG.md](CHANGELOG.md) what each release carries.
+
 A Terraform provider that manages a [RevenueCat](https://www.revenuecat.com/) project's catalog —
 apps, products, entitlements, offerings and packages — through the RevenueCat REST API v2.
 

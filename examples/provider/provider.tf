@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     revenuecat = {
-      source  = "mathgaps/revenuecat"
+      source  = "registry.opentofu.org/mathgaps/revenuecat"
       version = "~> 0.1"
     }
   }

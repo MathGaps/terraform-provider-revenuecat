@@ -20,7 +20,7 @@ wire format is not. See [Status](#status) below before using it against a produc
 terraform {
   required_providers {
     revenuecat = {
-      source = "mathgaps/revenuecat"
+      source = "registry.opentofu.org/mathgaps/revenuecat"
     }
   }
 }

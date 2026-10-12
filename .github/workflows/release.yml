@@ -53,7 +53,8 @@ jobs:
             found && /^## / { exit }
             found { print }
           ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
-          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
+          # Whitespace is not notes: GoReleaser only warns about it.
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"; then
             echo "CHANGELOG.md has no '## $version' section for tag $GITHUB_REF_NAME." >&2
             echo "Add one before tagging: it becomes the release notes on the Registry." >&2
             exit 1

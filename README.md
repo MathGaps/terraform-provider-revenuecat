@@ -42,7 +42,7 @@ Then point Terraform at your local build with a `dev_overrides` block in `~/.ter
 ```hcl
 provider_installation {
   dev_overrides {
-    "mathgaps/revenuecat" = "/path/to/your/gopath/bin"
+    "registry.opentofu.org/mathgaps/revenuecat" = "/path/to/your/gopath/bin"
   }
   direct {}
 }
@@ -56,7 +56,7 @@ With `dev_overrides` in place, skip `terraform init` and run `terraform plan` di
 terraform {
   required_providers {
     revenuecat = {
-      source = "mathgaps/revenuecat"
+      source = "registry.opentofu.org/mathgaps/revenuecat"
     }
   }
 }

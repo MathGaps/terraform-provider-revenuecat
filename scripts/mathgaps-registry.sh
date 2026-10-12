@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # The registry address MathGaps's fork publishes under, nmehlei/revenuecat ->
-# mathgaps/revenuecat, everywhere a configuration or a dev override names it.
+# registry.opentofu.org/mathgaps/revenuecat, everywhere a configuration or a dev
+# override names it. Always with the host: Terraform reads a bare
+# "mathgaps/revenuecat" as registry.terraform.io's, where this is not published.
 # Mechanical, so that a rebase onto upstream can drop the commit it made and
 # run it again (FORK.md). The Go module path stays upstream's: it is an import
 # path, not a registry address, and keeping it keeps every sync clean.
@@ -12,5 +14,5 @@ git grep -lz -e 'nmehlei/revenuecat' -e 'github.com/nmehlei/terraform-provider-r
   xargs -0 perl -pi -e '
     s{registry\.terraform\.io/nmehlei/revenuecat}{registry.opentofu.org/mathgaps/revenuecat}g;
     s{https://github\.com/nmehlei/terraform-provider-revenuecat\.git}{https://github.com/MathGaps/terraform-provider-revenuecat.git}g;
-    s{(?<![\w/.-])nmehlei/revenuecat}{mathgaps/revenuecat}g;
+    s{(?<![\w/.-])nmehlei/revenuecat}{registry.opentofu.org/mathgaps/revenuecat}g;
   '

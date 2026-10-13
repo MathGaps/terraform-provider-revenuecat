@@ -2,6 +2,8 @@ package provider
 
 import (
 	"fmt"
+	"net/http"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -146,15 +148,13 @@ resource "revenuecat_offering" "minimal" {
 // whose current offering is not the first one created: RevenueCat makes a
 // project's first offering current on its own, so the create of "max" answers
 // is_current=true while its configuration says false. It must apply, and
-// converge with "pro" current, whether the API lets the flag be cleared or not.
+// converge with "pro" current, whether the API lets the flag be cleared or
+// refuses it; a clear that fails for another reason fails the apply.
 func TestE2EOfferingsWhereTheFirstIsNotCurrent(t *testing.T) {
 	requireTerraform(t)
 
-	for _, refuse := range []bool{false, true} {
-		t.Run(fmt.Sprintf("refuse_clearing=%t", refuse), func(t *testing.T) {
-			env := newE2EEnvWith(t, mockrevenuecat.Options{RefuseClearingCurrent: refuse})
-
-			config := fmt.Sprintf(`
+	config := func(projectID string) string {
+		return fmt.Sprintf(`
 resource "revenuecat_offering" "max" {
   project_id = %q
   lookup_key = "max"
@@ -168,10 +168,14 @@ resource "revenuecat_offering" "pro" {
 
   depends_on = [revenuecat_offering.max]
 }
-`, env.projectID, env.projectID)
+`, projectID, projectID)
+	}
 
+	for _, status := range []int{0, http.StatusBadRequest} {
+		t.Run(fmt.Sprintf("clear_answers=%d", status), func(t *testing.T) {
+			env := newE2EEnvWith(t, mockrevenuecat.Options{ClearCurrentStatus: status})
 			env.steps(t, resource.TestStep{
-				Config:           config,
+				Config:           config(env.projectID),
 				ConfigPlanChecks: expectEmptyPlan(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("revenuecat_offering.max", "is_current", "false"),
@@ -180,6 +184,42 @@ resource "revenuecat_offering" "pro" {
 			})
 		})
 	}
+
+	t.Run("clear_fails", func(t *testing.T) {
+		env := newE2EEnvWith(t, mockrevenuecat.Options{ClearCurrentStatus: http.StatusForbidden})
+		env.steps(t, resource.TestStep{
+			Config:      config(env.projectID),
+			ExpectError: regexp.MustCompile(`Unable to clear the RevenueCat offering's current flag`),
+		})
+	})
+}
+
+// TestE2ELoneOfferingThatCannotBeCleared is a project's only offering,
+// configured is_current = false, where RevenueCat refuses to leave the project
+// without a current offering: the create applies with a warning, and the
+// update the next plan proposes fails saying what would let it through.
+func TestE2ELoneOfferingThatCannotBeCleared(t *testing.T) {
+	requireTerraform(t)
+	env := newE2EEnvWith(t, mockrevenuecat.Options{ClearCurrentStatus: http.StatusBadRequest})
+
+	config := fmt.Sprintf(`
+resource "revenuecat_offering" "only" {
+  project_id = %q
+  lookup_key = "only"
+  is_current = false
+}
+`, env.projectID)
+
+	env.steps(t,
+		resource.TestStep{
+			Config:             config,
+			ExpectNonEmptyPlan: true,
+		},
+		resource.TestStep{
+			Config:      config,
+			ExpectError: regexp.MustCompile(`make another offering current`),
+		},
+	)
 }
 
 func TestE2EAppLifecycleAndReplacement(t *testing.T) {

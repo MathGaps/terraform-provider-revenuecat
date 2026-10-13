@@ -150,11 +150,20 @@ type collectionSpec struct {
 	afterWrite func(*object)
 }
 
-// validationError is a 400 the mock returns instead of running create, for a
-// request body shape the real API rejects.
+// validationError is an error the mock returns instead of running a create or
+// an update, for a request the real API rejects: a 400 unless status says
+// otherwise.
 type validationError struct {
+	status  int
 	code    string
 	message string
+}
+
+func (v *validationError) httpStatus() int {
+	if v.status != 0 {
+		return v.status
+	}
+	return http.StatusBadRequest
 }
 
 func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec collectionSpec, segments []string) {
@@ -171,7 +180,7 @@ func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec co
 			}
 			if spec.validateCreate != nil {
 				if verr := spec.validateCreate(body); verr != nil {
-					s.writeError(w, http.StatusBadRequest, verr.code, verr.message)
+					s.writeError(w, verr.httpStatus(), verr.code, verr.message)
 					return
 				}
 			}
@@ -207,7 +216,7 @@ func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec co
 			}
 			if spec.validateUpdate != nil {
 				if verr := spec.validateUpdate(body); verr != nil {
-					s.writeError(w, http.StatusBadRequest, verr.code, verr.message)
+					s.writeError(w, verr.httpStatus(), verr.code, verr.message)
 					return
 				}
 			}
@@ -277,8 +286,8 @@ func (s *Server) routeOfferings(w http.ResponseWriter, r *http.Request, projectI
 		update:         offeringFields,
 		validateCreate: validateOfferingCreate,
 		validateUpdate: func(body map[string]any) *validationError {
-			if current, ok := body["is_current"].(bool); ok && !current && s.options.RefuseClearingCurrent {
-				return &validationError{code: "parameter_error", message: "a project keeps a current offering: make another offering current instead"}
+			if current, ok := body["is_current"].(bool); ok && !current && s.options.ClearCurrentStatus != 0 {
+				return &validationError{status: s.options.ClearCurrentStatus, code: "parameter_error", message: "a project keeps a current offering: make another offering current instead"}
 			}
 			return nil
 		},
@@ -413,7 +422,7 @@ func (s *Server) routeAttachments(
 		case "attach_products":
 			if kind == "package" {
 				if verr := validatePackageAttachProducts(body); verr != nil {
-					s.writeError(w, http.StatusBadRequest, verr.code, verr.message)
+					s.writeError(w, verr.httpStatus(), verr.code, verr.message)
 					return
 				}
 			}

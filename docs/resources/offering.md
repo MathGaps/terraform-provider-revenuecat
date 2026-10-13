@@ -15,8 +15,10 @@ RevenueCat's API only accepts `is_current` on an update, not on create — creat
 configure differently on your end for that.
 
 RevenueCat makes a project's first offering current on its own. When that offering is configured
-`is_current = false`, the provider clears the flag with the same update; if RevenueCat keeps it, the
-apply succeeds with a warning, and the offering stays current until another one is made current.
+`is_current = false`, the provider clears the flag with the same update; if RevenueCat keeps it or
+refuses the clear, the apply succeeds with a warning, and the offering stays current until another one
+is made current. Until then, the next plan shows the flag to clear, and that update fails saying so. A
+clear that fails for any other reason (authentication, a timeout, a server error) fails the apply.
 
 ## Example Usage
 
@@ -46,8 +48,9 @@ resource "revenuecat_offering" "default" {
 - `is_current` (Boolean) Whether this offering is the project's current offering. Only one offering
   per project can be current; making one current clears the flag on the previous one. RevenueCat makes a
   project's first offering current on its own: when that offering is configured `false`, the provider
-  clears the flag after the create, and where RevenueCat keeps it, warns and records `false` — the
-  offering stays current until another one is made current. Defaults to `false`.
+  clears the flag after the create, and where RevenueCat keeps it or refuses the clear, warns and records
+  `false` — the offering stays current until another one is made current, and an update that clears it
+  again fails until then. Defaults to `false`.
 - `metadata` (Map of String) Arbitrary string key-value pairs delivered alongside the offering to the SDKs.
 
 ### Read-Only

@@ -32,11 +32,13 @@ type Options struct {
 	// SeedProjectName names the seeded project.
 	SeedProjectName string
 
-	// RefuseClearingCurrent makes an offering update that sends
-	// is_current=false answer 400, for the case where the real API will not
-	// leave a project without a current offering. RevenueCat's documentation
-	// does not say which way it goes, so the provider is tested against both.
-	RefuseClearingCurrent bool
+	// ClearCurrentStatus, when set, is the status an offering update that
+	// sends is_current=false answers: 400 for the case where the real API will
+	// not leave a project without a current offering (RevenueCat's
+	// documentation does not say which way it goes, so the provider is tested
+	// against both), or another status for a clear that fails for an unrelated
+	// reason.
+	ClearCurrentStatus int
 }
 
 // Server is a stateful fake of the RevenueCat API v2 catalog.

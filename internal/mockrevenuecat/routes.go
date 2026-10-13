@@ -72,7 +72,7 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 			validateCreate: func(body map[string]any) *validationError {
 				return s.validateProductCreate(projectID, body)
 			},
-			validateUpdate: validateProductUpdate,
+			validateUpdate: bodyOnly(validateProductUpdate),
 		}, rest)
 
 	case "entitlements":
@@ -103,7 +103,7 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 				}
 				return s.validateAppInProject(projectID, body)
 			},
-			validateUpdate: func(body map[string]any) *validationError {
+			validateUpdate: func(_ string, body map[string]any) *validationError {
 				return s.validateAppInProject(projectID, body)
 			},
 		}, rest[1:])
@@ -140,7 +140,9 @@ type collectionSpec struct {
 	// validateUpdate is validateCreate's counterpart for the update body —
 	// several resources accept a different, narrower field set on update than
 	// on create (an entitlement's or package's lookup_key, for instance).
-	validateUpdate func(body map[string]any) *validationError
+	// It also gets the id of the object being updated, for a rule that
+	// depends on what is stored.
+	validateUpdate func(id string, body map[string]any) *validationError
 
 	// match optionally narrows which stored objects belong to this collection.
 	match func(*object) bool
@@ -164,6 +166,12 @@ func (v *validationError) httpStatus() int {
 		return v.status
 	}
 	return http.StatusBadRequest
+}
+
+// bodyOnly adapts a validator that reads only the update body to
+// validateUpdate.
+func bodyOnly(validate func(map[string]any) *validationError) func(string, map[string]any) *validationError {
+	return func(_ string, body map[string]any) *validationError { return validate(body) }
 }
 
 func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec collectionSpec, segments []string) {
@@ -215,7 +223,7 @@ func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec co
 				return
 			}
 			if spec.validateUpdate != nil {
-				if verr := spec.validateUpdate(body); verr != nil {
+				if verr := spec.validateUpdate(id, body); verr != nil {
 					s.writeError(w, verr.httpStatus(), verr.code, verr.message)
 					return
 				}
@@ -255,7 +263,7 @@ func (s *Server) routeEntitlements(w http.ResponseWriter, r *http.Request, proje
 		create:         entitlementFields,
 		update:         entitlementFields,
 		validateCreate: validateEntitlementCreate,
-		validateUpdate: validateEntitlementUpdate,
+		validateUpdate: bodyOnly(validateEntitlementUpdate),
 	}
 
 	// /entitlements/<id>/products and /entitlements/<id>/actions/<action>
@@ -285,8 +293,18 @@ func (s *Server) routeOfferings(w http.ResponseWriter, r *http.Request, projectI
 		},
 		update:         offeringFields,
 		validateCreate: validateOfferingCreate,
-		validateUpdate: func(body map[string]any) *validationError {
-			if current, ok := body["is_current"].(bool); ok && !current && s.options.ClearCurrentStatus != 0 {
+		// The refusal ClearCurrentStatus stands for is of a clear: an update that
+		// sends is_current=false to an offering already not current is not one.
+		validateUpdate: func(id string, body map[string]any) *validationError {
+			if s.options.ClearCurrentStatus == 0 {
+				return nil
+			}
+			obj, ok := s.store.get("offering", projectID, id)
+			if !ok {
+				return nil
+			}
+			wasCurrent, _ := obj.Fields["is_current"].(bool)
+			if current, ok := body["is_current"].(bool); ok && !current && wasCurrent {
 				return &validationError{status: s.options.ClearCurrentStatus, code: "parameter_error", message: "a project keeps a current offering: make another offering current instead"}
 			}
 			return nil
@@ -326,7 +344,7 @@ func (s *Server) routeOfferings(w http.ResponseWriter, r *http.Request, projectI
 			},
 			update:         packageFields,
 			validateCreate: validatePackageCreate,
-			validateUpdate: validatePackageUpdate,
+			validateUpdate: bodyOnly(validatePackageUpdate),
 			match: func(obj *object) bool {
 				return obj.Fields["offering_id"] == offeringID
 			},
@@ -353,7 +371,7 @@ func (s *Server) routePackages(w http.ResponseWriter, r *http.Request, projectID
 		create:         packageFields,
 		update:         packageFields,
 		validateCreate: validatePackageCreate,
-		validateUpdate: validatePackageUpdate,
+		validateUpdate: bodyOnly(validatePackageUpdate),
 	}, segments)
 }
 

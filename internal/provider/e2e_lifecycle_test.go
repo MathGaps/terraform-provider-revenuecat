@@ -149,16 +149,18 @@ resource "revenuecat_offering" "minimal" {
 // project's first offering current on its own, so the create of "max" answers
 // is_current=true while its configuration says false. It must apply, and
 // converge with "pro" current, whether the API lets the flag be cleared or
-// refuses it; a clear that fails for another reason fails the apply.
+// refuses it; a clear that fails for another reason fails the apply. Once
+// another offering is current, "max" updates like any other.
 func TestE2EOfferingsWhereTheFirstIsNotCurrent(t *testing.T) {
 	requireTerraform(t)
 
-	config := func(projectID string) string {
+	config := func(projectID, maxName string) string {
 		return fmt.Sprintf(`
 resource "revenuecat_offering" "max" {
-  project_id = %q
-  lookup_key = "max"
-  is_current = false
+  project_id   = %q
+  lookup_key   = "max"
+  display_name = %q
+  is_current   = false
 }
 
 resource "revenuecat_offering" "pro" {
@@ -168,27 +170,34 @@ resource "revenuecat_offering" "pro" {
 
   depends_on = [revenuecat_offering.max]
 }
-`, projectID, projectID)
+`, projectID, maxName, projectID)
 	}
 
 	for _, status := range []int{0, http.StatusBadRequest} {
 		t.Run(fmt.Sprintf("clear_answers=%d", status), func(t *testing.T) {
 			env := newE2EEnvWith(t, mockrevenuecat.Options{ClearCurrentStatus: status})
-			env.steps(t, resource.TestStep{
-				Config:           config(env.projectID),
-				ConfigPlanChecks: expectEmptyPlan(),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("revenuecat_offering.max", "is_current", "false"),
-					resource.TestCheckResourceAttr("revenuecat_offering.pro", "is_current", "true"),
-				),
-			})
+			env.steps(t,
+				resource.TestStep{
+					Config:           config(env.projectID, "Max"),
+					ConfigPlanChecks: expectEmptyPlan(),
+					Check: resource.ComposeAggregateTestCheckFunc(
+						resource.TestCheckResourceAttr("revenuecat_offering.max", "is_current", "false"),
+						resource.TestCheckResourceAttr("revenuecat_offering.pro", "is_current", "true"),
+					),
+				},
+				resource.TestStep{
+					Config:           config(env.projectID, "Tutero Max"),
+					ConfigPlanChecks: expectEmptyPlan(),
+					Check:            resource.TestCheckResourceAttr("revenuecat_offering.max", "display_name", "Tutero Max"),
+				},
+			)
 		})
 	}
 
 	t.Run("clear_fails", func(t *testing.T) {
 		env := newE2EEnvWith(t, mockrevenuecat.Options{ClearCurrentStatus: http.StatusForbidden})
 		env.steps(t, resource.TestStep{
-			Config:      config(env.projectID),
+			Config:      config(env.projectID, "Max"),
 			ExpectError: regexp.MustCompile(`Unable to clear the RevenueCat offering's current flag`),
 		})
 	})

@@ -144,6 +144,10 @@ type collectionSpec struct {
 
 	// match optionally narrows which stored objects belong to this collection.
 	match func(*object) bool
+
+	// afterWrite runs after a create or an update is stored, for a write that
+	// changes other objects too (making one offering current clears the rest).
+	afterWrite func(*object)
 }
 
 // validationError is a 400 the mock returns instead of running create, for a
@@ -172,6 +176,9 @@ func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec co
 				}
 			}
 			created := s.store.create(spec.kind, spec.projectID, spec.create(body))
+			if spec.afterWrite != nil {
+				spec.afterWrite(created)
+			}
 			s.writeJSON(w, http.StatusCreated, spec.render(created))
 		default:
 			s.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", r.Method+" is not supported here")
@@ -208,6 +215,9 @@ func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec co
 			if !ok {
 				s.notFound(w, spec.kind)
 				return
+			}
+			if spec.afterWrite != nil {
+				spec.afterWrite(updated)
 			}
 			s.writeJSON(w, http.StatusOK, spec.render(updated))
 
@@ -250,13 +260,35 @@ func (s *Server) routeEntitlements(w http.ResponseWriter, r *http.Request, proje
 
 func (s *Server) routeOfferings(w http.ResponseWriter, r *http.Request, projectID string, segments []string) {
 	spec := collectionSpec{
-		kind:           "offering",
-		projectID:      projectID,
-		basePath:       "/v2/projects/" + projectID + "/offerings",
-		render:         renderOffering,
-		create:         offeringFields,
+		kind:      "offering",
+		projectID: projectID,
+		basePath:  "/v2/projects/" + projectID + "/offerings",
+		render:    renderOffering,
+		// The real API makes a project's first offering its current one: the
+		// create body cannot carry is_current, yet it answers true (observed
+		// 2026-10-13, the first apply of MathGaps/iac stacks/revenuecat-dev).
+		create: func(body map[string]any) map[string]any {
+			fields := offeringFields(body)
+			if !s.store.hasCurrentOffering(projectID) {
+				fields["is_current"] = true
+			}
+			return fields
+		},
 		update:         offeringFields,
 		validateCreate: validateOfferingCreate,
+		validateUpdate: func(body map[string]any) *validationError {
+			if current, ok := body["is_current"].(bool); ok && !current && s.options.RefuseClearingCurrent {
+				return &validationError{code: "parameter_error", message: "a project keeps a current offering: make another offering current instead"}
+			}
+			return nil
+		},
+		// A project has one current offering: making one current clears the
+		// flag on the others.
+		afterWrite: func(obj *object) {
+			if current, _ := obj.Fields["is_current"].(bool); current {
+				s.store.clearOtherCurrentOfferings(projectID, obj.ID)
+			}
+		},
 	}
 
 	// /offerings/<id>/packages is the packages collection scoped to an offering.

@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
+	"github.com/nmehlei/terraform-provider-revenuecat/internal/mockrevenuecat"
 )
 
 // expectEmptyPlan asserts that re-planning an applied configuration proposes
@@ -138,6 +140,46 @@ resource "revenuecat_offering" "minimal" {
 			resource.TestCheckResourceAttr("revenuecat_offering.minimal", "is_current", "false"),
 		),
 	})
+}
+
+// TestE2EOfferingsWhereTheFirstIsNotCurrent is the first apply of a catalogue
+// whose current offering is not the first one created: RevenueCat makes a
+// project's first offering current on its own, so the create of "max" answers
+// is_current=true while its configuration says false. It must apply, and
+// converge with "pro" current, whether the API lets the flag be cleared or not.
+func TestE2EOfferingsWhereTheFirstIsNotCurrent(t *testing.T) {
+	requireTerraform(t)
+
+	for _, refuse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("refuse_clearing=%t", refuse), func(t *testing.T) {
+			env := newE2EEnvWith(t, mockrevenuecat.Options{RefuseClearingCurrent: refuse})
+
+			config := fmt.Sprintf(`
+resource "revenuecat_offering" "max" {
+  project_id = %q
+  lookup_key = "max"
+  is_current = false
+}
+
+resource "revenuecat_offering" "pro" {
+  project_id = %q
+  lookup_key = "pro"
+  is_current = true
+
+  depends_on = [revenuecat_offering.max]
+}
+`, env.projectID, env.projectID)
+
+			env.steps(t, resource.TestStep{
+				Config:           config,
+				ConfigPlanChecks: expectEmptyPlan(),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("revenuecat_offering.max", "is_current", "false"),
+					resource.TestCheckResourceAttr("revenuecat_offering.pro", "is_current", "true"),
+				),
+			})
+		})
+	}
 }
 
 func TestE2EAppLifecycleAndReplacement(t *testing.T) {

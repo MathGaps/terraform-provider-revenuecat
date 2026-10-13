@@ -14,6 +14,10 @@ RevenueCat's API only accepts `is_current` on an update, not on create — creat
 `is_current = true` transparently issues the create followed by an update; there is nothing to
 configure differently on your end for that.
 
+RevenueCat makes a project's first offering current on its own. When that offering is configured
+`is_current = false`, the provider clears the flag with the same update; if RevenueCat keeps it, the
+apply succeeds with a warning, and the offering stays current until another one is made current.
+
 ## Example Usage
 
 ```terraform
@@ -40,7 +44,10 @@ resource "revenuecat_offering" "default" {
 
 - `display_name` (String) Human-readable name of the offering, shown in the RevenueCat dashboard.
 - `is_current` (Boolean) Whether this offering is the project's current offering. Only one offering
-  per project can be current; making one current clears the flag on the previous one. Defaults to `false`.
+  per project can be current; making one current clears the flag on the previous one. RevenueCat makes a
+  project's first offering current on its own: when that offering is configured `false`, the provider
+  clears the flag after the create, and where RevenueCat keeps it, warns and records `false` — the
+  offering stays current until another one is made current. Defaults to `false`.
 - `metadata` (Map of String) Arbitrary string key-value pairs delivered alongside the offering to the SDKs.
 
 ### Read-Only

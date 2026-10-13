@@ -67,3 +67,14 @@ func StatusCode(err error) int {
 	}
 	return 0
 }
+
+// IsRefused reports whether err is the API declining the request as asked: a
+// 400, 409 or 422, which says the change itself is not allowed, as opposed to a
+// failure to authenticate, find, reach or be served by the API.
+func IsRefused(err error) bool {
+	switch StatusCode(err) {
+	case http.StatusBadRequest, http.StatusConflict, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
+}

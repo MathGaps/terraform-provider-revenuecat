@@ -218,6 +218,30 @@ func (s *store) list(kind string, match func(*object) bool) []*object {
 	return out
 }
 
+// hasCurrentOffering reports whether any offering of the project is current.
+func (s *store) hasCurrentOffering(projectID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, obj := range s.byKind["offering"] {
+		if current, _ := obj.Fields["is_current"].(bool); current && obj.ProjectID == projectID {
+			return true
+		}
+	}
+	return false
+}
+
+// clearOtherCurrentOfferings clears is_current on every offering of the
+// project but keepID.
+func (s *store) clearOtherCurrentOfferings(projectID, keepID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, obj := range s.byKind["offering"] {
+		if id != keepID && obj.ProjectID == projectID {
+			obj.Fields["is_current"] = false
+		}
+	}
+}
+
 func attachmentKey(kind, parentID string) string {
 	return kind + ":" + parentID
 }

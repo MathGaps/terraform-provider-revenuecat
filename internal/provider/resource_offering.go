@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -73,7 +74,11 @@ func (r *offeringResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"is_current": schema.BoolAttribute{
 				MarkdownDescription: "Whether this offering is the project's current offering. Only one " +
-					"offering per project can be current; making one current clears the flag on the previous one.",
+					"offering per project can be current; making one current clears the flag on the previous one. " +
+					"RevenueCat makes a project's first offering current on its own: when that offering is " +
+					"configured `false`, the provider clears the flag after the create, and where RevenueCat " +
+					"keeps it or refuses the clear, warns and records `false` — the offering stays current until " +
+					"another one is made current, and an update that clears it again fails until then.",
 				Optional: true,
 				Computed: true,
 				Default:  booldefault.StaticBool(false),
@@ -121,17 +126,49 @@ func (r *offeringResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	// The API rejects is_current on create ("Additional properties are not
-	// allowed") — every offering starts non-current, and marking one current
-	// is only accepted as a separate update call. Only make that call when
-	// the config actually asked for it; a plain create leaves it false, which
-	// matches what the API just gave us back anyway.
-	if plan.IsCurrent.ValueBool() {
-		isCurrent := true
-		offering, err = r.client.UpdateOffering(ctx, plan.ProjectID.ValueString(), offering.ID, revenuecat.UpdateOfferingRequest{
-			IsCurrent: &isCurrent,
+	// allowed"), so the flag is set by an update after it. The create decides
+	// a value of its own all the same: a project's first offering comes back
+	// current. Either way the planned value is the one to reach.
+	wantCurrent := plan.IsCurrent.ValueBool()
+	if offering.IsCurrent != wantCurrent {
+		updated, err := r.client.UpdateOffering(ctx, plan.ProjectID.ValueString(), offering.ID, revenuecat.UpdateOfferingRequest{
+			IsCurrent: &wantCurrent,
 		})
-		if err != nil {
-			resp.Diagnostics.AddError("Unable to mark the RevenueCat offering as current", err.Error())
+		switch {
+		case err == nil && updated.IsCurrent == wantCurrent:
+			offering = updated
+		case !wantCurrent && (err == nil || revenuecat.IsRefused(err)):
+			// RevenueCat made it current as the project's first offering and
+			// keeps it so, by answering true or by refusing the clear. That is
+			// the API's own default, not a failed apply: the offering exists as
+			// configured in every other respect, and it stops being current once
+			// another offering is made current. Record the planned value, as an
+			// apply must, and say so; the next refresh reads what RevenueCat
+			// holds, and an update that clears it again says what to do.
+			detail := "RevenueCat kept it current"
+			if err != nil {
+				detail = "RevenueCat refused to clear the flag: " + err.Error()
+			}
+			resp.Diagnostics.AddWarning(
+				"RevenueCat made this offering the project's current one",
+				fmt.Sprintf("Offering %q was created as the project's first offering, which RevenueCat makes current, and the configuration says is_current = false. %s. It stays current until another offering is made current.", plan.LookupKey.ValueString(), detail),
+			)
+			offering.IsCurrent = wantCurrent
+		default:
+			// The flag was not reached, and not because RevenueCat declined it:
+			// the update failed, or the API answered something else. The
+			// offering exists all the same, so keep it in state as RevenueCat
+			// holds it; the error then taints it rather than orphaning it.
+			if err == nil {
+				err = fmt.Errorf("the API answered is_current=%t", updated.IsCurrent)
+			}
+			summary := "Unable to clear the RevenueCat offering's current flag"
+			if wantCurrent {
+				summary = "Unable to mark the RevenueCat offering as current"
+			}
+			created := offeringToModel(ctx, plan.ProjectID.ValueString(), offering, plan.Metadata, &resp.Diagnostics)
+			resp.Diagnostics.Append(resp.State.Set(ctx, created)...)
+			resp.Diagnostics.AddError(summary, err.Error())
 			return
 		}
 	}
@@ -182,7 +219,11 @@ func (r *offeringResource) Update(ctx context.Context, req resource.UpdateReques
 		Metadata:    metadata,
 	})
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to update the RevenueCat offering", err.Error())
+		detail := err.Error()
+		if state.IsCurrent.ValueBool() && !plan.IsCurrent.ValueBool() && revenuecat.IsRefused(err) {
+			detail += "\n\nThis update clears is_current on the project's current offering. If that is what RevenueCat refused, it keeps a current offering until another one is made current: make another offering current, or configure this one is_current = true."
+		}
+		resp.Diagnostics.AddError("Unable to update the RevenueCat offering", detail)
 		return
 	}
 

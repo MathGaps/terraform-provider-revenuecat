@@ -72,7 +72,7 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 			validateCreate: func(body map[string]any) *validationError {
 				return s.validateProductCreate(projectID, body)
 			},
-			validateUpdate: validateProductUpdate,
+			validateUpdate: bodyOnly(validateProductUpdate),
 		}, rest)
 
 	case "entitlements":
@@ -103,7 +103,7 @@ func (s *Server) routeProjects(w http.ResponseWriter, r *http.Request, segments 
 				}
 				return s.validateAppInProject(projectID, body)
 			},
-			validateUpdate: func(body map[string]any) *validationError {
+			validateUpdate: func(_ string, body map[string]any) *validationError {
 				return s.validateAppInProject(projectID, body)
 			},
 		}, rest[1:])
@@ -140,17 +140,38 @@ type collectionSpec struct {
 	// validateUpdate is validateCreate's counterpart for the update body —
 	// several resources accept a different, narrower field set on update than
 	// on create (an entitlement's or package's lookup_key, for instance).
-	validateUpdate func(body map[string]any) *validationError
+	// It also gets the id of the object being updated, for a rule that
+	// depends on what is stored.
+	validateUpdate func(id string, body map[string]any) *validationError
 
 	// match optionally narrows which stored objects belong to this collection.
 	match func(*object) bool
+
+	// afterWrite runs after a create or an update is stored, for a write that
+	// changes other objects too (making one offering current clears the rest).
+	afterWrite func(*object)
 }
 
-// validationError is a 400 the mock returns instead of running create, for a
-// request body shape the real API rejects.
+// validationError is an error the mock returns instead of running a create or
+// an update, for a request the real API rejects: a 400 unless status says
+// otherwise.
 type validationError struct {
+	status  int
 	code    string
 	message string
+}
+
+func (v *validationError) httpStatus() int {
+	if v.status != 0 {
+		return v.status
+	}
+	return http.StatusBadRequest
+}
+
+// bodyOnly adapts a validator that reads only the update body to
+// validateUpdate.
+func bodyOnly(validate func(map[string]any) *validationError) func(string, map[string]any) *validationError {
+	return func(_ string, body map[string]any) *validationError { return validate(body) }
 }
 
 func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec collectionSpec, segments []string) {
@@ -167,11 +188,14 @@ func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec co
 			}
 			if spec.validateCreate != nil {
 				if verr := spec.validateCreate(body); verr != nil {
-					s.writeError(w, http.StatusBadRequest, verr.code, verr.message)
+					s.writeError(w, verr.httpStatus(), verr.code, verr.message)
 					return
 				}
 			}
 			created := s.store.create(spec.kind, spec.projectID, spec.create(body))
+			if spec.afterWrite != nil {
+				spec.afterWrite(created)
+			}
 			s.writeJSON(w, http.StatusCreated, spec.render(created))
 		default:
 			s.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", r.Method+" is not supported here")
@@ -199,8 +223,8 @@ func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec co
 				return
 			}
 			if spec.validateUpdate != nil {
-				if verr := spec.validateUpdate(body); verr != nil {
-					s.writeError(w, http.StatusBadRequest, verr.code, verr.message)
+				if verr := spec.validateUpdate(id, body); verr != nil {
+					s.writeError(w, verr.httpStatus(), verr.code, verr.message)
 					return
 				}
 			}
@@ -208,6 +232,9 @@ func (s *Server) routeCollection(w http.ResponseWriter, r *http.Request, spec co
 			if !ok {
 				s.notFound(w, spec.kind)
 				return
+			}
+			if spec.afterWrite != nil {
+				spec.afterWrite(updated)
 			}
 			s.writeJSON(w, http.StatusOK, spec.render(updated))
 
@@ -236,7 +263,7 @@ func (s *Server) routeEntitlements(w http.ResponseWriter, r *http.Request, proje
 		create:         entitlementFields,
 		update:         entitlementFields,
 		validateCreate: validateEntitlementCreate,
-		validateUpdate: validateEntitlementUpdate,
+		validateUpdate: bodyOnly(validateEntitlementUpdate),
 	}
 
 	// /entitlements/<id>/products and /entitlements/<id>/actions/<action>
@@ -250,13 +277,45 @@ func (s *Server) routeEntitlements(w http.ResponseWriter, r *http.Request, proje
 
 func (s *Server) routeOfferings(w http.ResponseWriter, r *http.Request, projectID string, segments []string) {
 	spec := collectionSpec{
-		kind:           "offering",
-		projectID:      projectID,
-		basePath:       "/v2/projects/" + projectID + "/offerings",
-		render:         renderOffering,
-		create:         offeringFields,
+		kind:      "offering",
+		projectID: projectID,
+		basePath:  "/v2/projects/" + projectID + "/offerings",
+		render:    renderOffering,
+		// The real API makes a project's first offering its current one: the
+		// create body cannot carry is_current, yet it answers true (observed
+		// 2026-10-13, the first apply of MathGaps/iac stacks/revenuecat-dev).
+		create: func(body map[string]any) map[string]any {
+			fields := offeringFields(body)
+			if !s.store.hasCurrentOffering(projectID) {
+				fields["is_current"] = true
+			}
+			return fields
+		},
 		update:         offeringFields,
 		validateCreate: validateOfferingCreate,
+		// The refusal ClearCurrentStatus stands for is of a clear: an update that
+		// sends is_current=false to an offering already not current is not one.
+		validateUpdate: func(id string, body map[string]any) *validationError {
+			if s.options.ClearCurrentStatus == 0 {
+				return nil
+			}
+			obj, ok := s.store.get("offering", projectID, id)
+			if !ok {
+				return nil
+			}
+			wasCurrent, _ := obj.Fields["is_current"].(bool)
+			if current, ok := body["is_current"].(bool); ok && !current && wasCurrent {
+				return &validationError{status: s.options.ClearCurrentStatus, code: "parameter_error", message: "a project keeps a current offering: make another offering current instead"}
+			}
+			return nil
+		},
+		// A project has one current offering: making one current clears the
+		// flag on the others.
+		afterWrite: func(obj *object) {
+			if current, _ := obj.Fields["is_current"].(bool); current {
+				s.store.clearOtherCurrentOfferings(projectID, obj.ID)
+			}
+		},
 	}
 
 	// /offerings/<id>/packages is the packages collection scoped to an offering.
@@ -285,7 +344,7 @@ func (s *Server) routeOfferings(w http.ResponseWriter, r *http.Request, projectI
 			},
 			update:         packageFields,
 			validateCreate: validatePackageCreate,
-			validateUpdate: validatePackageUpdate,
+			validateUpdate: bodyOnly(validatePackageUpdate),
 			match: func(obj *object) bool {
 				return obj.Fields["offering_id"] == offeringID
 			},
@@ -312,7 +371,7 @@ func (s *Server) routePackages(w http.ResponseWriter, r *http.Request, projectID
 		create:         packageFields,
 		update:         packageFields,
 		validateCreate: validatePackageCreate,
-		validateUpdate: validatePackageUpdate,
+		validateUpdate: bodyOnly(validatePackageUpdate),
 	}, segments)
 }
 
@@ -381,7 +440,7 @@ func (s *Server) routeAttachments(
 		case "attach_products":
 			if kind == "package" {
 				if verr := validatePackageAttachProducts(body); verr != nil {
-					s.writeError(w, http.StatusBadRequest, verr.code, verr.message)
+					s.writeError(w, verr.httpStatus(), verr.code, verr.message)
 					return
 				}
 			}

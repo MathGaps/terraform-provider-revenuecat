@@ -67,13 +67,19 @@ type e2eEnv struct {
 // through the environment, so no configuration has to carry a URL.
 func newE2EEnv(t *testing.T) *e2eEnv {
 	t.Helper()
+	return newE2EEnvWith(t, mockrevenuecat.Options{})
+}
+
+// newE2EEnvWith is newE2EEnv over a mock configured by opts, for a test of how
+// the provider meets one particular behaviour of the API.
+func newE2EEnvWith(t *testing.T, opts mockrevenuecat.Options) *e2eEnv {
+	t.Helper()
 
 	// A generous page size by default: pagination has its own dedicated
 	// coverage, and a small one here would only slow every test down.
-	mock := mockrevenuecat.New(mockrevenuecat.Options{
-		APIKey:   "sk-e2e-test",
-		PageSize: 50,
-	})
+	opts.APIKey = "sk-e2e-test"
+	opts.PageSize = 50
+	mock := mockrevenuecat.New(opts)
 
 	server := httptest.NewServer(mock)
 	t.Cleanup(server.Close)

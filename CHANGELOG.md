@@ -1,3 +1,15 @@
+## 0.1.20 (October 13, 2026)
+
+BUG FIXES:
+
+* **An offering configured `is_current = false` can be created first.** RevenueCat makes a project's
+  first offering current on its own, so a catalogue whose current offering was not the first one
+  created failed with "inconsistent result after apply". The provider now clears the flag after the
+  create. Where RevenueCat keeps it or refuses the clear, the apply succeeds with a warning, and the
+  offering stops being current once another one is made current. A clear that fails for any other
+  reason fails the apply, and the offering stays in state, tainted. A project's only offering that
+  RevenueCat will not clear fails its next update, saying to make another offering current (#8).
+
 ## 0.1.19 (October 13, 2026)
 
 MathGaps's first release: upstream

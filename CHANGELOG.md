@@ -1,4 +1,4 @@
-## 0.1.19 (Unreleased)
+## 0.1.19 (October 13, 2026)
 
 MathGaps's first release: upstream
 [0.1.18](https://github.com/nmehlei/terraform-provider-revenuecat/releases/tag/v0.1.18), published to

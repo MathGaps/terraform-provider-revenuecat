@@ -442,6 +442,35 @@ resource "revenuecat_package" "annual" {
 	env.checkNoObjectsRemain(t, "package", "offering")
 }
 
+// TestE2EPackagePositionBelowOneIsRefusedAtPlan is RevenueCat's minimum
+// position, 1: a package at 0 fails the plan, before anything is created,
+// instead of the create halfway through an apply.
+func TestE2EPackagePositionBelowOneIsRefusedAtPlan(t *testing.T) {
+	requireTerraform(t)
+	env := newE2EEnv(t)
+
+	env.steps(t, resource.TestStep{
+		Config: fmt.Sprintf(`
+resource "revenuecat_offering" "default" {
+  project_id = %[1]q
+  lookup_key = "default"
+}
+
+resource "revenuecat_package" "monthly" {
+  project_id   = %[1]q
+  offering_id  = revenuecat_offering.default.id
+  lookup_key   = "$rc_monthly"
+  display_name = "Monthly"
+  position     = 0
+}
+`, env.projectID),
+		PlanOnly:    true,
+		ExpectError: regexp.MustCompile(`must be at least 1`),
+	})
+
+	env.checkNoObjectsRemain(t, "package", "offering")
+}
+
 // captureAttr records an attribute's value so a later step can compare against it.
 func captureAttr(t *testing.T, resourceName, attribute string, into *string) resource.TestCheckFunc {
 	t.Helper()

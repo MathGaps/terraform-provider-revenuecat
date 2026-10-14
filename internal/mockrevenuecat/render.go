@@ -319,7 +319,7 @@ func validatePackageCreate(body map[string]any) *validationError {
 	if _, ok := body["display_name"]; !ok {
 		return &validationError{code: "parameter_error", message: "'display_name' is a required property"}
 	}
-	return nil
+	return validatePackagePosition(body)
 }
 
 // validatePackageUpdate mirrors the real API's update endpoint: display_name
@@ -334,6 +334,15 @@ func validatePackageUpdate(body map[string]any) *validationError {
 	}
 	if _, ok := body["position"]; !ok {
 		return &validationError{code: "parameter_error", message: "'position' is a required property"}
+	}
+	return validatePackagePosition(body)
+}
+
+// validatePackagePosition mirrors the real API's minimum position, 1 (observed
+// 2026-10-14 creating a package at 0 for MathGaps/iac stacks/revenuecat-dev).
+func validatePackagePosition(body map[string]any) *validationError {
+	if position, ok := body["position"].(float64); ok && position < 1 {
+		return &validationError{code: "parameter_error", message: fmt.Sprintf("%v is less than the minimum of 1", position)}
 	}
 	return nil
 }

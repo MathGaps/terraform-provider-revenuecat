@@ -233,6 +233,28 @@ func TestPackagesAreScopedToTheirOffering(t *testing.T) {
 	}
 }
 
+func TestPackagePositionStartsAtOne(t *testing.T) {
+	h := newHarness(t, Options{})
+	project := h.seedProject()
+	_, offering := h.do("POST", "/v2/projects/"+project+"/offerings", map[string]any{"lookup_key": "default"})
+	packages := "/v2/projects/" + project + "/offerings/" + offering["id"].(string) + "/packages"
+
+	status, _ := h.do("POST", packages, map[string]any{"lookup_key": "$rc_monthly", "display_name": "Monthly", "position": 0})
+	if status != http.StatusBadRequest {
+		t.Errorf("package at position 0 returned %d, want 400", status)
+	}
+
+	status, created := h.do("POST", packages, map[string]any{"lookup_key": "$rc_monthly", "display_name": "Monthly", "position": 1})
+	if status != http.StatusCreated {
+		t.Fatalf("package at position 1 returned %d, want 201", status)
+	}
+
+	status, _ = h.do("POST", packages+"/"+created["id"].(string), map[string]any{"display_name": "Monthly", "position": 0})
+	if status != http.StatusBadRequest {
+		t.Errorf("moving a package to position 0 returned %d, want 400", status)
+	}
+}
+
 func TestAnotherProjectsAppIsRefused(t *testing.T) {
 	h := newHarness(t, Options{})
 	project := h.seedProject()

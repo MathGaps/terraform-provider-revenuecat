@@ -3,11 +3,13 @@ package provider
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/nmehlei/terraform-provider-revenuecat/internal/revenuecat"
@@ -84,12 +86,17 @@ func (r *packageResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			},
 			"position": schema.Int64Attribute{
 				MarkdownDescription: "Position of the package within its offering, used to order packages " +
-					"on a paywall. Optional on create, but the API requires it on every later update, so " +
+					"on a paywall, from 1: the API refuses 0. Optional on create, but the API requires it on every later update, so " +
 					"it is required here too rather than leaving a package that can be created but never " +
 					"renamed without also supplying this. The create endpoint does not reliably honor the " +
 					"requested value — this resource detects the mismatch and issues a follow-up update to " +
 					"correct it, so the configured value is always what ends up in state.",
 				Required: true,
+				// The API's own minimum ("0 is less than the minimum of 1"),
+				// refused here at plan time rather than halfway through an apply.
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
 			},
 			"created_at": schema.Int64Attribute{
 				MarkdownDescription: "Creation time of the package, in milliseconds since the Unix epoch.",
